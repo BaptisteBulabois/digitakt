@@ -1,0 +1,69 @@
+# Direction du projet
+
+Décisions confirmées par l'utilisateur le 8 octobre 2026.
+
+## Objectif
+
+Reproduire avec précision l'interface et le workflow musical du **Digitakt II**
+dans un instrument **VST3 Windows x64 pour Ableton Live**. Les interactions,
+la navigation, les commandes et les règles du séquenceur sont les critères
+principaux de fidélité.
+
+La précision sonore par rapport au matériel n'est pas une exigence. Le plugin
+doit permettre d'importer les samples de l'utilisateur ; les traitements audio
+peuvent rester des implémentations indépendantes.
+
+## Priorités
+
+- Organisation des pages et paramètres, sélection des pistes et des pas,
+  retours visuels et manipulation des commandes.
+- Édition du séquenceur : trigs, parameter locks, conditions, microtiming,
+  retriggers, swing, longueur et échelle des pistes/patterns.
+- Gestion musicale des samples, sons, patterns et projets selon les fonctions
+  décrites dans la documentation de référence.
+- Opérations de copie, collage, effacement, sauvegarde et restauration lorsque
+  ces comportements sont documentés.
+- Adaptation des gestes physiques à la souris et au clavier, avec des actions
+  équivalentes et une aide explicite.
+- Intégration DAW : transport/tempo du host, automation, entrée MIDI,
+  sauvegarde des samples et rappel des projets Live.
+
+## Hors périmètre
+
+Overbridge, connexion USB à une machine Elektron, transfert vers le matériel,
+mise à jour de son firmware et autres fonctions de gestion d'un appareil réel.
+Ces éléments ne sont pas des fonctionnalités manquantes à implémenter.
+
+Les fonctions purement musicales doivent être évaluées séparément : un LFO,
+le slicing ou l'édition de patterns restent pertinents même sans appareil réel.
+Le sampling ou le MIDI externe ne seront ajoutés que si un usage dans le DAW
+est identifié ; ils ne sont pas requis pour relier une machine physique.
+
+## Base à préserver
+
+Le commit publié `751ebcb` représente la première version. L'utilisateur a
+validé son installation comme VST3 dans Ableton Live, sans encore confirmer
+tous les comportements musicaux.
+
+Les améliorations doivent préserver l'identité du plugin, les identifiants
+des paramètres existants et le rappel des états sauvegardés. Toute extension
+de l'état doit prévoir la lecture des projets de cette première version.
+
+## Références attendues
+
+Le manuel officiel et les notes de mises à jour servent à définir la cible.
+Pour chaque document effectivement reçu, noter son titre, la version de
+firmware concernée et les sections utilisées. La cible de firmware sera
+déterminée à partir de ces références.
+
+À la date de cette décision, aucun PDF, ZIP ou lien vers ces documents n'est
+accessible dans le chat ou les fichiers de travail. Leur analyse est donc
+en attente ; aucune évolution d'interface ne doit être présentée comme issue
+de documents encore indisponibles.
+
+## Validation
+
+Construire une correspondance entre les fonctions documentées et leur
+implémentation. Vérifier les enchaînements d'actions, les valeurs et l'état
+obtenu après chaque opération. Les comparaisons sonores avec une machine
+réelle sont facultatives et ne conditionnent pas l'avancement du projet.

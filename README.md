@@ -4,6 +4,8 @@ Une réimplémentation indépendante de fonctions du **Digitakt II** pour **Wind
 
 Il s'agit d'une première version fonctionnelle, pas d'une émulation sonore certifiée de la machine. Le moteur, l'interface et les sons de démonstration sont originaux ; ils ne contiennent pas de firmware ni de banque de sons Elektron.
 
+La priorité est maintenant la **fidélité de l'interface et du workflow musical** du Digitakt II, avec les samples importés par l'utilisateur. Overbridge et les fonctions de connexion au matériel sont hors périmètre. Les décisions de référence sont conservées dans [docs/PRODUCT_SCOPE.md](docs/PRODUCT_SCOPE.md).
+
 ## Jouer dans Live
 
 1. Copier le dossier complet `Takt II.vst3` dans `C:\Program Files\Common Files\VST3\` (ou un dossier VST3 personnalisé de Live).
@@ -30,7 +32,7 @@ Avec **Host** désactivé, **Run** et le tempo interne pilotent le séquenceur. 
 
 Un clic sur un pas active/désactive son trig et le sélectionne. Un clic droit ou un clic avec modificateur sélectionne un pas pour éditer ses paramètres. La longueur du pattern se règle par piste. Le bouton **Clear** efface les pas de la piste sélectionnée.
 
-Les fonctions non implémentées et les besoins de mesures matérielles sont décrits dans [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md). La compatibilité réelle avec Ableton Live doit être vérifiée dans Live ; les tests de host de ce dépôt ne remplacent pas cette validation.
+Les fonctions non implémentées sont décrites dans [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md). L'utilisateur a confirmé l'installation du VST3 dans Ableton Live ; les comportements musicaux doivent encore être vérifiés dans Live.
 
 ## Compiler sur Windows
 
@@ -44,7 +46,7 @@ En résumé, installer **Visual Studio 2022** avec le module « Développement D
 
 JUCE **8.0.6** est téléchargé au commit `51a8a6d7aeae7326956d747737ccf1575e61e209`. Un checkout existant peut être fourni avec `-DTAKT_JUCE_PATH=...`.
 
-Le bundle est dans `build/TaktII_artefacts/Release/VST3/Takt II.vst3`. Copier **le dossier entier**, y compris `Contents/x86_64-win/`, dans le dossier VST3 de Live.
+Avec le script PowerShell, le bundle est dans `build-windows/TaktII_artefacts/Release/VST3/Takt II.vst3`. Copier **le dossier entier**, y compris `Contents/x86_64-win/`, dans le dossier VST3 de Live.
 
 ## Développer dans le cloud Linux
 

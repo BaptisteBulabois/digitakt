@@ -2,6 +2,8 @@
 
 La demande porte sur le Digitakt II, utilisé comme instrument VST3 sous Windows dans Ableton Live. Ce dépôt reconstruit un workflow de sampler/séquenceur à 16 pistes. Il n'extrait pas le firmware de la machine, et aucune machine physique n'était accessible pendant le développement.
 
+La direction actuelle est définie dans [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md) : fidélité de l'interface et du workflow, sans exigence d'identité sonore. Les mesures matérielles ne sont pas un prérequis. Overbridge et la gestion d'un appareil réel sont exclus du périmètre.
+
 ## Sources et niveau de certitude
 
 - Produit de référence : https://www.elektron.se/en/digitakt-ii. Le site officiel et son CDN ont renvoyé HTTP 403 depuis cet environnement ; le manuel officiel n'a donc pas pu être consulté ici.
@@ -24,20 +26,21 @@ Les contrôles de pattern et les références de samples sont transférés au mo
 
 | Domaine | État |
 | --- | --- |
-| Machines avancées de lecture, slicing, time stretch/Werp | Non implémentées ; algorithmes et artefacts à mesurer |
+| Machines avancées de lecture, slicing, time stretch/Werp | Non implémentées ; comportement et commandes à préciser dans le manuel |
 | LFO et enveloppe de filtre | Non implémentés |
-| Familles complètes de filtres et calibration du DSP | Passe-bas indépendant uniquement ; réponses à comparer |
+| Familles complètes de filtres | Passe-bas indépendant uniquement ; réglages et interactions à documenter |
 | Locks de tous les paramètres et choix de sample par pas | Locks de pitch/cutoff uniquement |
 | Conditions Fill/First/Previous/Neighbor | Condition de cycle et probabilité uniquement |
 | Pistes MIDI externes, CC, MIDI output | Non implémentés ; entrée MIDI pour jouer les samples |
 | Banques/projets, chaînes de patterns, song mode | Un pattern à 16 pistes rappelé avec l'état du plugin |
-| Sampling direct, streaming et Overbridge | Non implémentés |
+| Sampling direct dans le DAW | Non implémenté ; usage à définir |
 | Sorties séparées et sidechain | Sortie stéréo principale uniquement |
-| Formats de projets Elektron et SysEx | Non pris en charge |
-| Identité sonore et précision des commandes | Aucune équivalence matérielle mesurée |
+| Transfert matériel, Overbridge, maintenance du firmware | Hors périmètre |
+| Formats de projets Elektron et SysEx | Non pris en charge ; hors périmètre pour la connexion au matériel |
+| Interface et précision des commandes | À confronter au manuel et aux notes de mise à jour fournis |
 
-## Protocole pour une comparaison matérielle
+## Validation de l'interface et du workflow
 
-Pour poursuivre vers une émulation fidèle, utiliser ses propres samples de test sur un Digitakt II : impulsion, sinus, sweep logarithmique, signal stéréo asymétrique et bruit calibré. Capturer la sortie pour des valeurs connues de pitch, start/end, attaque/décroissance, cutoff/résonance, drive et effets, puis mesurer le timing, les réponses en fréquence, les courbes de gain et les artefacts. Tester ensuite les conditions et locks avec plusieurs longueurs de pattern et des changements de tempo.
+Le manuel et les notes de mises à jour permettront de fixer une version cible et de décrire les pages, commandes et enchaînements d'actions. Chaque fonction sera reliée à une section de référence, puis vérifiée au niveau de l'état du séquenceur et de l'interface.
 
-Ces acquisitions permettraient de distinguer les erreurs de cette implémentation des différences d'algorithme. Elles sont nécessaires pour revendiquer une émulation exacte ; elles n'ont pas été réalisées pendant cette livraison.
+Les gestes physiques seront adaptés à la souris et au clavier en conservant leur effet musical. Les tests devront vérifier notamment les locks, conditions, opérations sur les patterns et le rappel des projets Live. Une comparaison sonore avec une machine réelle reste facultative.
