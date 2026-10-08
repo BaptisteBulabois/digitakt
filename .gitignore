@@ -1,0 +1,12 @@
+build*/
+artifacts/
+dist/
+.deps/
+.tools/
+.DS_Store
+*.user
+*.wav
+*.aif
+*.aiff
+*.flac
+!tests/fixtures/**
