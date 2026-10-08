@@ -49,17 +49,24 @@ Les améliorations doivent préserver l'identité du plugin, les identifiants
 des paramètres existants et le rappel des états sauvegardés. Toute extension
 de l'état doit prévoir la lecture des projets de cette première version.
 
-## Références attendues
+## Références reçues et cible
 
-Le manuel officiel et les notes de mises à jour servent à définir la cible.
-Pour chaque document effectivement reçu, noter son titre, la version de
-firmware concernée et les sections utilisées. La cible de firmware sera
-déterminée à partir de ces références.
+Le pack `Digitakt_II_Codex_Pack.zip` fourni par l'utilisateur contient des liens
+et un script de récupération. Les documents officiels ont été téléchargés et
+lus le 8 octobre 2026 : manuel **OS 1.17**, 118 pages, et notes des versions
+jusqu'à **1.17**. Leurs versions, dates et empreintes sont consignées dans
+[reference/SOURCES.md](reference/SOURCES.md).
 
-À la date de cette décision, aucun PDF, ZIP ou lien vers ces documents n'est
-accessible dans le chat ou les fichiers de travail. Leur analyse est donc
-en attente ; aucune évolution d'interface ne doit être présentée comme issue
-de documents encore indisponibles.
+La cible documentaire est **OS 1.17**, y compris les interactions ajoutées
+en 1.10 et la machine Slice introduite en 1.15. Les ajouts Outbox des versions
+1.16/1.17 restent hors périmètre. Les consignes de maintenance contenues dans
+les sources sont des informations sur la machine, pas des actions demandées
+pour cet environnement.
+
+Les audits distinguent comportement documenté, état réel du prototype et
+adaptation proposée au VST. Le développement suit la
+[spécification de workflow](WORKFLOW_SPEC.md) ; une exigence documentée ne doit
+pas être présentée comme une fonctionnalité déjà livrée.
 
 ## Validation
 

@@ -16,4 +16,20 @@ bash scripts/build.sh
 ctest --test-dir build --output-on-failure
 ```
 
-Le workflow GitHub Actions compile et teste séparément la cible Windows avec Visual Studio. Le chargement final dans Ableton Live doit être vérifié sur une machine Windows avec Live installé.
+Le workflow GitHub Actions a compilé et testé la cible Windows avec Visual
+Studio (run `37825987059`). L'utilisateur a confirmé l'installation du VST3
+dans Ableton Live ; les scénarios musicaux détaillés restent à vérifier dans Live.
+
+## Analyse documentaire OS 1.17
+
+Les audits du 8 octobre 2026 comparent le code du prototype aux documents
+officiels récupérés avec leurs empreintes, et fournissent des scénarios attendus.
+Ils ne démontrent pas la conformité du prototype au matériel : certains tests
+existants vérifient ses règles simplifiées, notamment la probabilité déterministe
+et le retrigger par nombre de répétitions.
+
+Ce lot modifie la documentation et l'exclusion Git des copies de référence.
+La cohérence des liens locaux et `git diff --check` sont contrôlés ; aucune
+recompilation ni nouvelle validation audio n'est nécessaire pour ces fichiers.
+Les prochaines modifications de code devront valider les règles de la
+[spécification de workflow](WORKFLOW_SPEC.md) en préservant le rappel Live.

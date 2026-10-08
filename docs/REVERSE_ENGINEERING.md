@@ -6,11 +6,17 @@ La direction actuelle est définie dans [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md) : f
 
 ## Sources et niveau de certitude
 
-- Produit de référence : https://www.elektron.se/en/digitakt-ii. Le site officiel et son CDN ont renvoyé HTTP 403 depuis cet environnement ; le manuel officiel n'a donc pas pu être consulté ici.
+- Sources principales : manuel officiel **OS 1.17** et notes des versions jusqu'à **1.17**, téléchargés et consultés le 8 octobre 2026. Les refus HTTP 403 rencontrés pendant le premier développement ne bloquent plus leur consultation. Les URL, dates et empreintes sont dans [reference/SOURCES.md](reference/SOURCES.md).
 - Recherche indépendante d'architecture : https://github.com/lalzart/digitakt-ii-firmware-research-public. Les documents publics distinguent les observations d'architecture des hypothèses sur le DSP. Ils ne démontrent pas l'équivalence sonore d'une réimplémentation. Aucun code de firmware n'a été repris.
 - Mapping de contrôleur indépendant : https://github.com/techronmic/Digitakt-II_NLCXL3. Il corrobore les pistes 1–16 et les familles de commandes sample/filtre/amplitude/effets ; ce n'est pas une spécification complète du produit.
 
 Les valeurs et algorithmes ci-dessous sont des décisions de ce plugin, et non des constantes extraites d'Elektron.
+
+Les audits de [l'interface](reference/UI_WORKFLOW_AUDIT.md), du
+[séquenceur](reference/SEQUENCER_WORKFLOW_AUDIT.md) et des
+[évolutions firmware](reference/FIRMWARE_AUDIT.md) comparent cette base aux
+références officielles. Les priorités de correction sont dans
+[WORKFLOW_SPEC.md](WORKFLOW_SPEC.md).
 
 ## Moteur fourni
 
@@ -26,9 +32,9 @@ Les contrôles de pattern et les références de samples sont transférés au mo
 
 | Domaine | État |
 | --- | --- |
-| Machines avancées de lecture, slicing, time stretch/Werp | Non implémentées ; comportement et commandes à préciser dans le manuel |
+| Machines avancées de lecture, slicing, time stretch/Werp | Non implémentées ; cible décrite dans l'annexe A du manuel et les audits |
 | LFO et enveloppe de filtre | Non implémentés |
-| Familles complètes de filtres | Passe-bas indépendant uniquement ; réglages et interactions à documenter |
+| Familles complètes de filtres | Passe-bas indépendant uniquement ; organisation cible documentée dans l'annexe A |
 | Locks de tous les paramètres et choix de sample par pas | Locks de pitch/cutoff uniquement |
 | Conditions Fill/First/Previous/Neighbor | Condition de cycle et probabilité uniquement |
 | Pistes MIDI externes, CC, MIDI output | Non implémentés ; entrée MIDI pour jouer les samples |
@@ -37,10 +43,10 @@ Les contrôles de pattern et les références de samples sont transférés au mo
 | Sorties séparées et sidechain | Sortie stéréo principale uniquement |
 | Transfert matériel, Overbridge, maintenance du firmware | Hors périmètre |
 | Formats de projets Elektron et SysEx | Non pris en charge ; hors périmètre pour la connexion au matériel |
-| Interface et précision des commandes | À confronter au manuel et aux notes de mise à jour fournis |
+| Interface et précision des commandes | Comparaison documentée dans les audits ; pages natives et modes contextuels à implémenter |
 
 ## Validation de l'interface et du workflow
 
-Le manuel et les notes de mises à jour permettront de fixer une version cible et de décrire les pages, commandes et enchaînements d'actions. Chaque fonction sera reliée à une section de référence, puis vérifiée au niveau de l'état du séquenceur et de l'interface.
+Le manuel OS 1.17 et les notes de mises à jour fixent désormais la cible documentaire. Les audits relient les pages, commandes et enchaînements d'actions aux sections de référence. Leur implémentation devra être vérifiée au niveau de l'état du séquenceur et de l'interface ; l'analyse documentaire ne constitue pas une validation du comportement du plugin.
 
 Les gestes physiques seront adaptés à la souris et au clavier en conservant leur effet musical. Les tests devront vérifier notamment les locks, conditions, opérations sur les patterns et le rappel des projets Live. Une comparaison sonore avec une machine réelle reste facultative.

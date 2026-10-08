@@ -6,6 +6,11 @@ Il s'agit d'une première version fonctionnelle, pas d'une émulation sonore cer
 
 La priorité est maintenant la **fidélité de l'interface et du workflow musical** du Digitakt II, avec les samples importés par l'utilisateur. Overbridge et les fonctions de connexion au matériel sont hors périmètre. Les décisions de référence sont conservées dans [docs/PRODUCT_SCOPE.md](docs/PRODUCT_SCOPE.md).
 
+Le manuel officiel **OS 1.17** et les notes des versions ont été analysés avec
+des agents. La [spécification de workflow](docs/WORKFLOW_SPEC.md) décrit les
+écarts du prototype, les références et les étapes d'implémentation. Cet audit
+ne modifie pas le VST3 déjà installé.
+
 ## Jouer dans Live
 
 1. Copier le dossier complet `Takt II.vst3` dans `C:\Program Files\Common Files\VST3\` (ou un dossier VST3 personnalisé de Live).
