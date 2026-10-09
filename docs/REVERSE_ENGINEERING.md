@@ -20,9 +20,9 @@ références officielles. Les priorités de correction sont dans
 
 ## Moteur fourni
 
-Le moteur C++ ne dépend pas de JUCE. Les buffers d'effets sont alloués dans `prepare`, pas pendant le rendu. Chaque piste a une voix stéréo monophonique, un lecteur à interpolation linéaire, une enveloppe attack/decay exponentielle, un filtre passe-bas à variables d'état, une saturation et une réduction de résolution. Le mix final utilise une saturation douce pour borner la sortie.
+Le moteur C++ ne dépend pas de JUCE. Les buffers d'effets sont alloués dans `prepare`, pas pendant le rendu. Chaque piste a une voix stéréo monophonique. Le chemin Legacy conserve le lecteur à interpolation linéaire, l'enveloppe attack/decay et les traitements des anciens projets. La branche 0.3 ajoute les machines de lecture, trois LFO par piste, les enveloppes AHD/ADSR, les filtres et le chorus décrits dans [WORKFLOW_0_3.md](WORKFLOW_0_3.md). Les algorithmes granulaires, les filtres et les courbes temporelles sont indépendants de ceux du matériel.
 
-Un pas correspond à une double croche (0,25 noire). La probabilité dépend d'un hash déterministe de la piste et de l'indice absolu du pas : le même passage au même PPQ donne les mêmes décisions. Les conditions « tous les N cycles » utilisent la longueur de chaque piste. Les locks de hauteur et de filtre s'appliquent au trig courant ; le trig suivant sans lock retrouve les valeurs de base.
+À vitesse normale, un pas correspond à une double croche (0,25 noire). Les anciens pas conservent leur probabilité déterministe et leurs retriggers simplifiés. Les nouveaux trigs utilisent des conditions A:B, PRE, NEI, FIRST, LAST et FILL, une probabilité par activation et un train de retriggers à débit musical. Les locks disponibles portent sur la hauteur, le filtre et la tranche ; les locks généralisés restent à compléter.
 
 Le séquenceur calcule ses événements à partir de la position musicale du bloc. Il supporte des tailles de blocs différentes et les repositionnements du host. Les notes MIDI 36–51 sont un choix de routage du plugin, pas une revendication de compatibilité avec le mapping MIDI matériel.
 
@@ -32,18 +32,21 @@ Les contrôles de pattern et les références de samples sont transférés au mo
 
 | Domaine | État |
 | --- | --- |
-| Machines avancées de lecture, slicing, time stretch/Werp | Non implémentées ; cible décrite dans l'annexe A du manuel et les audits |
-| LFO et enveloppe de filtre | Non implémentés |
-| Familles complètes de filtres | Passe-bas indépendant uniquement ; organisation cible documentée dans l'annexe A |
-| Locks de tous les paramètres et choix de sample par pas | Locks de pitch/cutoff uniquement |
-| Conditions Fill/First/Previous/Neighbor | Condition de cycle et probabilité uniquement |
+| Machines de lecture, slicing, time stretch/Werp | Implémentées sur la branche 0.3 avec DSP indépendant ; formats et unités adaptés au VST |
+| LFO et enveloppe de filtre | Trois LFO et enveloppe implémentés ; destinations entre LFO et key tracking à quatre destinations à compléter |
+| Familles de filtres | Multimode, Lowpass 4, EQ, Comb−/+, Legacy et Prototype ; aucune équivalence sonore revendiquée |
+| Locks de tous les paramètres et choix de sample par pas | Pitch/cutoff/slice disponibles ; généralisation et sample locks à développer |
+| Conditions Fill/First/Previous/Neighbor | Implémentées en mode avancé ; règles CHANGE/RESET complètes à développer |
 | Pistes MIDI externes, CC, MIDI output | Non implémentés ; entrée MIDI pour jouer les samples |
-| Banques/projets, chaînes de patterns, song mode | Un pattern à 16 pistes rappelé avec l'état du plugin |
+| Banques, chaînes de patterns, song mode | 128 patterns, chaînes de 64 entrées et 16 songs de 99 lignes ; presse-papiers des arrangements à compléter |
+| Enregistrement LIVE/STEP et clavier chromatique | À développer ; GRID et déclenchement MIDI disponibles |
+| Browser samples/presets/kits | Import de samples disponible ; browser et gestion complète des bibliothèques à développer |
+| Effets | Delay/reverb historiques, chorus et routages ; compresseur et contrôles SEND FX restants à développer |
 | Sampling direct dans le DAW | Non implémenté ; usage à définir |
 | Sorties séparées et sidechain | Sortie stéréo principale uniquement |
 | Transfert matériel, Overbridge, maintenance du firmware | Hors périmètre |
 | Formats de projets Elektron et SysEx | Non pris en charge ; hors périmètre pour la connexion au matériel |
-| Interface et précision des commandes | Comparaison documentée dans les audits ; pages natives et modes contextuels à implémenter |
+| Interface et précision des commandes | Panneau fondé sur le SVG fourni ; pages contextuelles et adaptations à la souris décrites dans le guide 0.3 |
 
 ## Validation de l'interface et du workflow
 

@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <new>
 #include <stdexcept>
 #include <string>
@@ -14,12 +15,17 @@ namespace
 {
 thread_local bool countAllocations = false;
 thread_local std::size_t allocations = 0;
+thread_local std::size_t deallocations = 0;
 #if defined(_MSC_VER)
 __declspec(noinline)
 #elif defined(__GNUC__) || defined(__clang__)
 __attribute__((noinline))
 #endif
-void releaseAllocation(void* pointer) noexcept { std::free(pointer); }
+void releaseAllocation(void* pointer) noexcept
+{
+    if (countAllocations && pointer) ++deallocations;
+    std::free(pointer);
+}
 }
 
 void* operator new(std::size_t size)
@@ -158,7 +164,7 @@ double frequency(const std::vector<float>& values, int first = 1000, int last = 
 
 void testSilenceAndDemoSamples()
 {
-    Engine engine;
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage;
     Audio audio(64);
     engine.process(audio.left.data(), audio.right.data(), 64, Transport{});
     require(energy(audio.left) == 0, "unprepared engine produces silence");
@@ -183,7 +189,7 @@ void testSilenceAndDemoSamples()
 
 void testExternalTriggerAndStereo()
 {
-    Engine engine;
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage;
     initialise(engine, sine(220, 24000, true));
     auto audio = triggerAudio(engine, 22000, 17);
     require(energy(audio.left, 0, 17) == 0, "external trigger obeys sample offset");
@@ -202,7 +208,7 @@ void testExternalTriggerAndStereo()
 
 void testSequencerTimingAndLength()
 {
-    Engine engine;
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage;
     initialise(engine);
     Step s; s.enabled = true; s.velocity = 1;
     for (int i = 0; i < 16; ++i) engine.setStep(0, i, s);
@@ -225,7 +231,7 @@ void testSequencerTimingAndLength()
 
 void testConditionsProbabilityAndRetrigs()
 {
-    Engine engine;
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage;
     initialise(engine);
     engine.setTrackLength(0,1);
     Step s; s.enabled = true; s.velocity = 1; s.conditionEvery = 2; s.conditionOffset = 1;
@@ -249,7 +255,9 @@ void testConditionsProbabilityAndRetrigs()
 
 void testBlockInvariance()
 {
-    Engine a, b, c;
+    auto aStorage = std::make_unique<Engine>(); auto& a = *aStorage;
+    auto bStorage = std::make_unique<Engine>(); auto& b = *bStorage;
+    auto cStorage = std::make_unique<Engine>(); auto& c = *cStorage;
     for (Engine* engine : {&a,&b,&c})
     {
         initialise(*engine,constant(101),128);
@@ -275,7 +283,7 @@ void testBlockInvariance()
 
 void testPitchAndParameterLocks()
 {
-    Engine engine;
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage;
     initialise(engine,sine());
     auto p = dry(); p.pitch = 12;
     engine.setTrackParams(0,p);
@@ -299,7 +307,7 @@ void testPitchAndParameterLocks()
 
 void testActiveVoiceAutomation()
 {
-    Engine engine;
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage;
     initialise(engine,sine());
     auto initial=triggerAudio(engine,512);
     auto p=dry(); p.pitch=12;
@@ -336,7 +344,7 @@ void testTrimmingReverseAndLoop()
 {
     auto ramp=std::make_shared<Sample>(); ramp->sampleRate=sampleRate;
     for (int i=0;i<2000;++i) ramp->left.push_back(0.02f+0.2f*i/2000);
-    Engine engine; initialise(engine,ramp);
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage; initialise(engine,ramp);
     auto forward=triggerAudio(engine,2400);
     auto p=dry(); p.reverse=true; engine.setTrackParams(0,p); engine.reset();
     auto reverse=triggerAudio(engine,2400);
@@ -359,7 +367,7 @@ void testTrimmingReverseAndLoop()
 void testSampleReplacement()
 {
     const auto original=constant(48000);
-    Engine engine; initialise(engine,original);
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage; initialise(engine,original);
     auto first=triggerAudio(engine,512);
     engine.setSample(0,original);
     Audio continuation(512);
@@ -372,7 +380,7 @@ void testSampleReplacement()
 
 void testEnvelopeFilterDriveAndBitReduction()
 {
-    Engine engine; initialise(engine,constant(24000));
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage; initialise(engine,constant(24000));
     auto p=dry(); p.attack=0.05f; engine.setTrackParams(0,p);
     auto slow=triggerAudio(engine,8192);
     require(energy(slow.left,0,480)<energy(slow.left,2400,2880)*0.05, "attack fades into the sample");
@@ -399,7 +407,7 @@ void testEnvelopeFilterDriveAndBitReduction()
 
 void testEffectTailsAndReset()
 {
-    Engine engine; initialise(engine);
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage; initialise(engine);
     auto p=dry(); p.delaySend=1; engine.setTrackParams(0,p);
     FxParams fx; fx.delayMix=0.8f; fx.reverbMix=0; fx.delayBeats=0.25f; fx.feedback=0.4f; engine.setFx(fx);
     auto delay=triggerAudio(engine,19000);
@@ -418,7 +426,7 @@ void testEffectTailsAndReset()
 
 void testFiniteInputsAndRealtimeAllocation()
 {
-    Engine engine; initialise(engine);
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage; initialise(engine);
     auto p=dry();
     const float nan=std::numeric_limits<float>::quiet_NaN();
     p.gain=p.pan=p.pitch=p.cutoff=p.attack=p.decay=p.resonance=p.start=p.end=p.drive=p.bitDepth=nan;
@@ -447,6 +455,580 @@ void testFiniteInputsAndRealtimeAllocation()
     engine.setStep(0,128,Step{}); engine.process(nullptr,nullptr,64,Transport{});
     require(engine.getCurrentStep(-1)==0, "invalid track input is handled safely");
 }
+
+Audio machineAudio(TrackParams params, std::shared_ptr<const Sample> sample, int frames,
+                   double bpm = 120.0, int note = 60, float pitch = 0.0f, int block = 257)
+{
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage;
+    initialise(engine, std::move(sample), 128);
+    engine.setTrackParams(0, params);
+    Audio result(frames);
+    TriggerEvent trigger{0, 0, 1.0f, pitch, note};
+    Transport transport; transport.bpm = bpm;
+    for (int start = 0; start < frames; start += block)
+    {
+        const int size = std::min(block, frames - start);
+        engine.process(result.left.data() + start, result.right.data() + start, size,
+                       transport, start == 0 ? &trigger : nullptr, start == 0 ? 1 : 0);
+    }
+    return result;
+}
+
+void testMachineRegionsAndLegacy()
+{
+    auto source = std::make_shared<Sample>(); source->sampleRate = sampleRate;
+    source->left.assign(4000, 0.02f);
+    std::fill(source->left.begin(), source->left.begin() + 1000, 0.3f);
+    auto p = dry(); p.machine = Machine::Oneshot; p.start = 0.25f; p.sourceLength = 0.25f;
+    const auto trim = machineAudio(p, source, 4096);
+    require(energy(trim.left, 20, 800) > 0.1 && energy(trim.left, 1000, 4096) == 0,
+            "Oneshot LEN is relative to START and stops at START+LEN");
+    p.start = 0.0f; p.sourceLength = 0.5f; p.loopPosition = 0.25f; p.playback = PlaybackMode::ForwardLoop;
+    const auto introLoop = machineAudio(p, source, 8000);
+    require(energy(introLoop.left, 100, 900) > energy(introLoop.left, 6100, 6900) * 100,
+            "forward loop plays its introduction once then returns to LOOP, not START");
+    p.playback = PlaybackMode::ReverseLoop;
+    const auto reverseLoop = machineAudio(p, source, 8000);
+    require(energy(reverseLoop.left, 6100, 6900) > 0.1
+            && energy(reverseLoop.left, 6100, 6900) < energy(introLoop.left, 100, 900) * 0.02,
+            "reverse loop stays between LOOP and START+LEN");
+    auto resampled = std::make_shared<Sample>(); resampled->sampleRate = 24000;
+    resampled->left.assign(16, 0.0f); std::fill(resampled->left.begin(), resampled->left.begin() + 8, .8f);
+    p.start = 0; p.sourceLength = 1; p.loopPosition = .5f; p.playback = PlaybackMode::ForwardLoop;
+    const auto seam = machineAudio(p, resampled, 256);
+    require(energy(seam.left, 40, 256) < 1.0e-10,
+            "resampling at the loop seam interpolates toward LOOP and never reintroduces START");
+    auto legacy = dry(); legacy.start = 0.125f; legacy.end = 0.6f; legacy.loop = true;
+    const auto original = machineAudio(legacy, source, 8192);
+    legacy.sourceLength = 0.01f; legacy.bars = 64; legacy.playback = PlaybackMode::Reverse;
+    legacy.slice = 9; legacy.sampleLevel = 0;
+    legacy.lfos[0].destination = LfoDestination::Pitch; // depth zero remains exactly inert
+    const auto preserved = machineAudio(legacy, source, 8192);
+    require(original.left == preserved.left && original.right == preserved.right,
+            "Legacy ignores new machine controls and disabled LFOs sample for sample");
+    p = dry(); p.machine = Machine::Oneshot;
+    const auto tunedNote = machineAudio(p, sine(), 22000, 120, 72);
+    require(std::abs(frequency(tunedNote.left) - 440) < 4,
+            "a new-machine trig NOTE transposes from MIDI C4=60 without changing track TUNE");
+}
+
+void testGridAndManualSlice()
+{
+    auto source = std::make_shared<Sample>(); source->sampleRate = sampleRate;
+    source->left.assign(4000, 0.0f);
+    std::fill(source->left.begin() + 2000, source->left.begin() + 3000, 0.2f);
+    auto p = dry(); p.machine = Machine::Grid; p.sliceCount = 4; p.slice = 0;
+    const auto silent = machineAudio(p, source, 2000);
+    p.slice = 2;
+    const auto grid = machineAudio(p, source, 2000);
+    require(energy(silent.left) == 0 && energy(grid.left, 0, 1000) > 1 && energy(grid.left, 1000, 2000) == 0,
+            "Grid selects only the requested equal-sized source slice");
+    p.sliceByNote = true;
+    const auto byNote = machineAudio(p, source, 2000, 120, 26, 12);
+    require(byNote.left == grid.left, "NOTE selects slices from adapted MIDI C1=24 and does not transpose them");
+    const auto wrappedNote = machineAudio(p, source, 2000, 120, 30, -12);
+    require(wrappedNote.left == grid.left, "NOTE selection wraps after the last slice");
+    p.machine = Machine::Slice; p.sliceByNote = false; p.slice = 1; p.sliceCount = 3;
+    p.slicePoints[0] = {0.0f, 0.1f, 0.0f};
+    p.slicePoints[1] = {0.5f, 0.55f, 0.525f};
+    p.slicePoints[2] = {0.55f, 0.75f, 0.55f};
+    auto manual = machineAudio(p, source, 1600);
+    require(energy(manual.left, 0, 150) > 0.2 && energy(manual.left, 201, 1600) == 0,
+            "Slice plays the manually stored nonuniform start and end markers");
+    p.sliceLength = 2;
+    manual = machineAudio(p, source, 1600);
+    require(energy(manual.left, 500, 900) > 1 && energy(manual.left, 1001, 1600) == 0,
+            "Slice LEN plays consecutive slices through the final slice end");
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage; initialise(engine, source); p.slice = 0; p.sliceLength = 1; engine.setTrackParams(0, p);
+    Step step; step.enabled = true; step.velocity = 1; step.lockSlice = true; step.slice = 1;
+    engine.setStep(0, 0, step);
+    const auto locked = sequenceAudio(engine, 1600, 257, true);
+    require(energy(locked.left, 0, 150) > 0.2, "a slice lock chooses the sequencer trig's slice instead of the track slice");
+}
+
+void testTempoMachines()
+{
+    auto p = dry(); p.machine = Machine::Repitch; p.bars = 0.5f;
+    const auto normal = machineAudio(p, sine(), 50000, 120);
+    const auto faster = machineAudio(p, sine(), 50000, 240);
+    require(std::abs(frequency(normal.left) - 220) < 4 && std::abs(frequency(faster.left) - 440) < 4,
+            "Repitch follows tempo by changing source playback speed and pitch");
+    require(energy(normal.left, 30000, 45000) > 1 && energy(faster.left, 24000, 50000) == 0,
+            "Repitch halves playback duration when tempo doubles");
+    for (const auto machine : {Machine::Stretch, Machine::Werp})
+    {
+        p.machine = machine; p.segmentSize = 0.1f; p.segmentMode = PlaybackMode::ForwardLoop;
+        const auto stretched = machineAudio(p, sine(), 50000, 240);
+        require(std::abs(frequency(stretched.left) - 220) < 12,
+                "independent Stretch/Werp preserve approximate source pitch when tempo doubles (machine "
+                + std::to_string(static_cast<int>(machine)) + ", measured " + std::to_string(frequency(stretched.left)) + " Hz)");
+        require(energy(stretched.left, 1000, 20000) > 1 && energy(stretched.left, 24000, 50000) == 0,
+                "Stretch/Werp use BARS and host tempo for timeline duration");
+        p.pitch = 12;
+        const auto transposed = machineAudio(p, sine(), 50000, 240);
+        require(std::abs(frequency(transposed.left) - 440) < 12
+                && energy(transposed.left, 24000, 50000) == 0,
+                "Stretch/Werp tune their grains independently of the tempo timeline");
+        p.pitch = 0;
+        const auto split = machineAudio(p, sine(), 30000, 137.2, 60, 0, 113);
+        const auto whole = machineAudio(p, sine(), 30000, 137.2, 60, 0, 30000);
+        require(split.left == whole.left, "granular timeline and pitch are independent of host block partitioning");
+        bounded(transposed);
+    }
+}
+
+void testLfoModesAndLegacyOptIn()
+{
+    auto p = dry(); p.machine = Machine::Oneshot; p.playback = PlaybackMode::ForwardLoop;
+    auto& lfo = p.lfos[0]; lfo.destination = LfoDestination::Pan; lfo.wave = LfoWave::Square;
+    lfo.speed = 16; lfo.multiplier = 32; lfo.depth = 127;
+    const auto square = machineAudio(p, constant(48000), 48000);
+    require(energy(square.right, 1000, 10000) > energy(square.left, 1000, 10000) * 100
+            && energy(square.left, 14000, 22000) > energy(square.right, 14000, 22000) * 100,
+            "bipolar LFO and documented SPD/MULT timing move pan across each half cycle");
+    lfo.mode = LfoMode::Hold;
+    const auto held = machineAudio(p, constant(48000), 48000);
+    require(energy(held.right, 14000, 22000) > energy(held.left, 14000, 22000) * 100,
+            "HOLD latches its value at the trig instead of following its free phase");
+    lfo.mode = LfoMode::Half;
+    const auto half = machineAudio(p, constant(48000), 48000);
+    require(energy(half.left, 28000, 40000) > energy(half.right, 28000, 40000) * 100,
+            "HALF stops and holds the value at the middle of the waveform");
+    lfo.mode = LfoMode::Trigger; lfo.phase = 64;
+    const auto phase = machineAudio(p, constant(48000), 10000);
+    require(energy(phase.left, 1000, 8000) > energy(phase.right, 1000, 8000) * 100,
+            "TRIGGER restarts from configured start phase");
+    p.machine = Machine::Legacy; p.loop = true; lfo.phase = 0;
+    const auto optedIn = machineAudio(p, constant(48000), 24000);
+    require(energy(optedIn.left, 14000, 22000) > energy(optedIn.right, 14000, 22000) * 100,
+            "explicit modulation also works on Legacy tracks without changing their saved default sound");
+    p.machine = Machine::Oneshot;
+    p.lfos[1] = lfo; p.lfos[1].destination = LfoDestination::Gain; p.lfos[1].depth = -32;
+    p.lfos[2] = lfo; p.lfos[2].destination = LfoDestination::Cutoff; p.lfos[2].wave = LfoWave::Random;
+    p.lfos[2].phase = 100; p.lfos[2].depth = 16;
+    const auto whole = machineAudio(p, sine(), 48000, 127, 60, 0, 48000);
+    const auto split = machineAudio(p, sine(), 48000, 127, 60, 0, 193);
+    require(whole.left == split.left && energy(whole.left) > 1, "three independent LFOs and random slew remain block invariant");
+    bounded(whole);
+}
+
+void testNewMachineRealtimeAndFinite()
+{
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage; engine.prepare(sampleRate, 128);
+    const auto source = sine();
+    for (int track = 0; track < numTracks; ++track)
+    {
+        auto p = dry(); p.machine = track % 2 == 0 ? Machine::Stretch : Machine::Werp;
+        p.playback = PlaybackMode::ForwardLoop; p.segmentMode = PlaybackMode::ReverseLoop;
+        for (int i = 0; i < 3; ++i)
+        {
+            p.lfos[i].depth = 12; p.lfos[i].multiplier = 64;
+            p.lfos[i].destination = i == 0 ? LfoDestination::Pitch : i == 1 ? LfoDestination::Cutoff : LfoDestination::Pan;
+        }
+        engine.setSample(track, source); engine.setTrackParams(track, p);
+        Step step; step.enabled = true; engine.setStep(track, 0, step);
+    }
+    Audio output(8192); Transport transport; transport.playing = true; transport.bpm = 180;
+    allocations = 0; countAllocations = true;
+    engine.process(output.left.data(), output.right.data(), 8192, transport);
+    countAllocations = false;
+    require(allocations == 0 && energy(output.left) > 1, "sixteen granular tracks and 48 LFOs allocate no memory during rendering");
+    bounded(output);
+    auto p = dry(); p.machine = Machine::Stretch;
+    p.sourceLength = p.loopPosition = p.bars = p.segmentSize = std::numeric_limits<float>::quiet_NaN();
+    p.lfos[0].destination = LfoDestination::Pitch; p.lfos[0].depth = std::numeric_limits<float>::infinity();
+    engine.reset(); engine.setTrackParams(0, p);
+    auto invalid = triggerAudio(engine, 1024); bounded(invalid);
+}
+
+void testAdvancedConditionsAndNeighborOrder()
+{
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage; initialise(engine);
+    engine.setTrackLength(0, 4);
+    auto left = dry(); left.pan = -1;
+    auto right = dry(); right.pan = 1;
+    engine.setTrackParams(0, left);
+    engine.setTrackParams(1, right);
+    engine.setSample(1, constant());
+    engine.setTrackLength(1, 4);
+    Step step; step.enabled = step.advanced = true;
+    step.rule.condition = sequencer::Condition::Cycle;
+    step.rule.cycleA = 2; step.rule.cycleB = 2;
+    engine.setStep(0, 0, step);
+    step.rule.condition = sequencer::Condition::Previous;
+    engine.setStep(0, 1, step);
+    step.rule.inverted = true;
+    engine.setStep(0, 2, step);
+    step.rule.condition = sequencer::Condition::Neighbor;
+    step.rule.inverted = false;
+    engine.setStep(1, 0, step);
+    const auto split = sequenceAudio(engine, 48000, 97, true);
+    require(onsets(split.left) == std::vector<int>({12000, 24000, 30000}),
+            "A:B, PRE and inverted PRE share conditional memory in musical order");
+    require(onsets(split.right) == std::vector<int>({24000}),
+            "NEI reads the preceding track's condition at the same time, not a future block event");
+    auto wholeStorage = std::make_unique<Engine>(); auto& whole = *wholeStorage; initialise(whole); whole.setTrackParams(0, left); whole.setTrackParams(1, right);
+    whole.setSample(1, constant()); whole.setTrackLength(0, 4); whole.setTrackLength(1, 4);
+    step.rule = {}; step.rule.condition = sequencer::Condition::Cycle;
+    step.rule.cycleA = 2; step.rule.cycleB = 2; whole.setStep(0, 0, step);
+    step.rule.condition = sequencer::Condition::Previous; whole.setStep(0, 1, step);
+    step.rule.inverted = true; whole.setStep(0, 2, step);
+    step.rule.condition = sequencer::Condition::Neighbor; step.rule.inverted = false;
+    whole.setStep(1, 0, step);
+    const auto oneBlock = sequenceAudio(whole, 48000, 48000, true);
+    require(split.left == oneBlock.left && split.right == oneBlock.right,
+            "conditional memory is evaluated once per occurrence independent of caller block partitions");
+
+    auto firstStorage = std::make_unique<Engine>(); auto& first = *firstStorage; initialise(first); first.setTrackLength(0, 1);
+    step.rule = {}; step.rule.condition = sequencer::Condition::First; first.setStep(0, 0, step);
+    require(onsets(sequenceAudio(first, 24000, 127, false).left) == std::vector<int>({0}),
+            "1ST only triggers the first cycle of a one-step track");
+    first.reset(); first.setLastPatternCycle(true); step.rule.condition = sequencer::Condition::Last;
+    first.setStep(0, 0, step);
+    require(onsets(sequenceAudio(first, 12000, 127, false).left) == std::vector<int>({0, 6000}),
+            "LST uses the explicit final-pattern-cycle signal");
+    first.reset(); first.setLastPatternCycle(false); first.setFill(false);
+    step.rule = {}; step.rule.fill = sequencer::Fill::On; first.setStep(0, 0, step);
+    require(energy(sequenceAudio(first, 6000, 127, false).left) == 0.0, "FILL ON remains silent outside a fill");
+    first.setFill(true);
+    require(onsets(sequenceAudio(first, 6000, 127, false).left) == std::vector<int>({0}),
+            "FILL ON takes effect while the clock is already running");
+}
+
+void testAdvancedRetrigsSpeedsAndProbability()
+{
+    const auto render = [](int block, int speed, bool retrig, float probability)
+    {
+        auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage; initialise(engine);
+        auto p = dry(); p.speedIndex = speed; engine.setTrackParams(0, p);
+        Step step; step.enabled = step.advanced = true; step.probability = probability;
+        step.retrig.enabled = retrig; step.retrig.rateIndex = 12;
+        step.noteLengthBeats = 1.0f;
+        engine.setTrackLength(0, 16); engine.setStep(0, 0, step);
+        return sequenceAudio(engine, 96000, block, true);
+    };
+    const auto retrigs = render(137, 4, true, 1.0f);
+    require(onsets(retrigs.left) == std::vector<int>({0,3000,6000,9000,12000,15000,18000,21000}),
+            "RATE retrigs stream across blocks for the note gate and stop before the gate end");
+    const auto sameRetrigs = render(96000, 4, true, 1.0f);
+    require(retrigs.left == sameRetrigs.left, "cross-block retrig trains are sample-exact across block sizes");
+    require(onsets(render(127, 6, false, 1.0f).left) == std::vector<int>({0,48000}),
+            "2x speed loops a sixteen-step track in two beats");
+    require(onsets(render(127, 0, false, 1.0f).left) == std::vector<int>({0}),
+            "1/8x speed stretches a sixteen-step track to thirty-two beats");
+
+    const auto randomRender = [](int block)
+    {
+        auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage; initialise(engine); engine.setTrackLength(0, 1);
+        Step step; step.enabled = step.advanced = true; step.probability = 0.5f;
+        step.rule.condition = sequencer::Condition::Probability;
+        engine.setStep(0, 0, step);
+        return sequenceAudio(engine, 480000, block, true);
+    };
+    const auto randomSplit = randomRender(89);
+    const auto randomWhole = randomRender(480000);
+    const auto notes = onsets(randomSplit.left);
+    require(randomSplit.left == randomWhole.left && notes.size() > 20 && notes.size() < 60,
+            "PROB draws are fresh for each loop and unaffected by host block partitions");
+    auto restartedStorage = std::make_unique<Engine>(); auto& restarted = *restartedStorage; initialise(restarted); restarted.setTrackLength(0, 1);
+    Step step; step.enabled = step.advanced = true; step.probability = 0.5f;
+    restarted.setStep(0, 0, step);
+    const auto passOne = sequenceAudio(restarted, 480000, 113, true);
+    restarted.restartSequencer();
+    const auto passTwo = sequenceAudio(restarted, 480000, 113, true);
+    require(onsets(passOne.left) != onsets(passTwo.left), "explicit restart refreshes the probability epoch");
+
+    auto fadingStorage = std::make_unique<Engine>(); auto& fading = *fadingStorage; initialise(fading); fading.setTrackLength(0, 16);
+    step.probability = 1.0f; step.retrig.enabled = true; step.retrig.rateIndex = 12;
+    step.retrig.velocityFade = -64; step.retrig.fadeLengthBeats = 0.5;
+    step.noteLengthBeats = 0.5; fading.setStep(0, 0, step);
+    const auto fade = sequenceAudio(fading, 12000, 127, true);
+    require(energy(fade.left, 0, 1000) > energy(fade.left, 9000, 10000) * 8,
+            "VFAD progressively reduces retrig amplitudes across its LEN envelope");
+}
+
+void testLockTrigsAndSequencerRealtime()
+{
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage; initialise(engine, sine());
+    auto p = dry(); p.loop = true; engine.setTrackParams(0, p);
+    Step note; note.enabled = note.advanced = true; engine.setStep(0, 0, note);
+    Step lock; lock.advanced = lock.lockTrig = true; lock.lockPitch = true;
+    lock.pitch = 12; lock.lfoTrig = false; engine.setStep(0, 1, lock);
+    const auto audio = sequenceAudio(engine, 24000, 127, true);
+    require(std::abs(frequency(audio.left, 1000, 5000) - 220) < 15
+            && std::abs(frequency(audio.left, 7000, 21000) - 440) < 12,
+            "lock trigs modify a sounding voice without resetting its amplitude envelope");
+    engine.reset(); engine.setStep(0, 0, Step{});
+    require(energy(sequenceAudio(engine, 12000, 127, true).left) == 0.0,
+            "lock trigs without an active voice never start a new sample");
+
+    engine.reset();
+    for (int track = 0; track < numTracks; ++track)
+    {
+        engine.setSample(track, constant()); engine.setTrackParams(track, dry());
+        note.retrig.enabled = true; note.retrig.rateIndex = 16;
+        note.noteLengthBeats = 512; note.probability = 0.75f;
+        note.rule.condition = sequencer::Condition::Probability;
+        engine.setStep(track, 0, note);
+    }
+    Audio output(8192); Transport transport; transport.playing = true;
+    allocations = 0; countAllocations = true;
+    engine.process(output.left.data(), output.right.data(), 8192, transport);
+    countAllocations = false;
+    require(allocations == 0 && energy(output.left) > 1,
+            "advanced scheduler, conditions and sixteen long retrig trains allocate no memory");
+    bounded(output);
+}
+
+Audio renderDsp(TrackParams params, std::shared_ptr<const Sample> source, int frames,
+                const TriggerEvent* events, int eventCount, ChorusParams chorus = {})
+{
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage; initialise(engine, std::move(source), 127);
+    engine.setTrackParams(0, params); engine.setChorus(chorus);
+    Audio output(frames);
+    engine.process(output.left.data(), output.right.data(), frames, Transport{}, events, eventCount);
+    return output;
+}
+
+double toneEnergy(const std::vector<float>& values, double hz, int first = 1000, int last = 22000)
+{
+    double sineSum = 0.0, cosineSum = 0.0;
+    for (int frame = first; frame < last; ++frame)
+    {
+        const double phase = 2.0 * pi * hz * frame / sampleRate;
+        sineSum += values[frame] * std::sin(phase);
+        cosineSum += values[frame] * std::cos(phase);
+    }
+    return (sineSum * sineSum + cosineSum * cosineSum) / ((last - first) * (last - first));
+}
+
+void testNewAmplitudeGatesAndVolume()
+{
+    auto p = dry(); p.machine = Machine::Oneshot; p.playback = PlaybackMode::ForwardLoop;
+    p.amplitudeEnvelope = {EnvelopeMode::Ahd, .005f, .1f, .05f, .8f, .01f, false, true};
+    const TriggerEvent note{0, 0, 1, 0, 60};
+    const auto timed = renderDsp(p, sine(), 24000, &note, 1);
+    require(energy(timed.left, 1000, 4000) > 1 && energy(timed.left, 9000, 24000) == 0,
+            "AHD performs its attack, timed hold and finite decay on a looping source");
+
+    std::array<TriggerEvent, 2> events{note, TriggerEvent{12000, 0, 0, 0, 60, 0, false, true}};
+    p.amplitudeEnvelope.holdNote = true;
+    const auto held = renderDsp(p, sine(), 24000, events.data(), 2);
+    require(energy(held.left, 9000, 11000) > 1 && energy(held.left, 16000, 24000) == 0,
+            "AHD HOLD NOTE sustains until MIDI release, then uses DEC rather than RELEASE");
+    events[1].note = 61;
+    const auto unmatched = renderDsp(p, sine(), 24000, events.data(), 2);
+    require(energy(unmatched.left, 18000, 22000) > 1, "an unmatched note-off cannot release another note on the track");
+    events[1].note = 60;
+
+    p.amplitudeEnvelope.mode = EnvelopeMode::Adsr;
+    p.amplitudeEnvelope.decay = .01f; p.amplitudeEnvelope.sustain = .6f;
+    const auto released = renderDsp(p, sine(), 24000, events.data(), 2);
+    require(energy(released.left, 9000, 11000) > .5 && energy(released.left, 13000, 24000) == 0,
+            "ADSR sustains and finishes exactly after the external note-off release");
+    auto audition = note; audition.gateBeats = .125f;
+    const auto finiteAudition = renderDsp(p, sine(), 12000, &audition, 1);
+    require(energy(finiteAudition.left, 1000, 2500) > .5 && energy(finiteAudition.left, 4000, 12000) == 0,
+            "a finite mouse-audition gate prevents ADSR or HOLD NOTE from sticking without a held key");
+    auto sequenceStorage = std::make_unique<Engine>(); auto& sequence = *sequenceStorage; initialise(sequence, sine()); sequence.setTrackParams(0, p);
+    Step step; step.enabled = step.advanced = true; step.velocity = 1; step.noteLengthBeats = .125f;
+    sequence.setStep(0, 0, step);
+    const auto gate = sequenceAudio(sequence, 24000, 113, true);
+    require(energy(gate.left, 1000, 2500) > .5 && energy(gate.left, 4000, 24000) == 0,
+            "TRIG LEN closes the sequencer gate across host blocks and releases ADSR");
+
+    p.amplitudeEnvelope.mode = EnvelopeMode::Ahd; p.amplitudeEnvelope.attack = .1f;
+    p.amplitudeEnvelope.holdNote = true;
+    events[1] = note; events[1].sampleOffset = 6000;
+    const auto restarted = renderDsp(p, sine(), 10000, events.data(), 2);
+    p.amplitudeEnvelope.reset = false;
+    const auto continued = renderDsp(p, sine(), 10000, events.data(), 2);
+    require(energy(continued.left, 6010, 6100) > energy(restarted.left, 6010, 6100) * 100,
+            "AMP RESET off retains the envelope level when a note retriggers");
+    p = dry(); p.machine = Machine::Oneshot;
+    const auto unity = renderDsp(p, sine(), 20000, &note, 1);
+    p.ampVolume = .5f;
+    const auto half = renderDsp(p, sine(), 20000, &note, 1);
+    p.ampVolume = 0;
+    const auto zero = renderDsp(p, sine(), 20000, &note, 1);
+    require(energy(half.left) > energy(unity.left) * .24 && energy(half.left) < energy(unity.left) * .26
+            && energy(zero.left) == 0, "AMP VOL scales audio independently of SRC LEV and TRACK LEVEL");
+}
+
+void testIntegratedFilterMachinesEnvelopeAndBaseWidth()
+{
+    auto source = std::make_shared<Sample>(); source->sampleRate = sampleRate;
+    source->left.resize(48000);
+    for (int frame = 0; frame < 48000; ++frame)
+        source->left[frame] = static_cast<float>(.03 * std::sin(2 * pi * 300 * frame / sampleRate)
+                                             + .03 * std::sin(2 * pi * 7000 * frame / sampleRate));
+    const TriggerEvent note{0, 0, 1, 0, 60};
+    auto p = dry(); p.machine = Machine::Oneshot; p.cutoff = 1000;
+    const auto low = renderDsp(p, source, 24000, &note, 1);
+    p.filter.machine = FilterMachine::Multimode; p.filter.type = 1;
+    const auto high = renderDsp(p, source, 24000, &note, 1);
+    require(toneEnergy(low.left, 300) > toneEnergy(low.left, 7000) * 100
+            && toneEnergy(high.left, 7000) > toneEnergy(high.left, 300) * 100,
+            "Multimode TYPE audibly changes the actual engine's lowpass into highpass");
+    p.filter.machine = FilterMachine::Lowpass4;
+    const auto lp4 = renderDsp(p, source, 24000, &note, 1);
+    require(toneEnergy(lp4.left, 7000) < toneEnergy(low.left, 7000) * .05
+            && toneEnergy(lp4.left, 300) > toneEnergy(low.left, 300) * .5,
+            "LP4 steepens rejection while preserving the low-frequency band");
+    p.cutoff = 300; p.filter.machine = FilterMachine::Eq; p.filter.eqGain = 12; p.filter.eqQ = 2;
+    const auto boost = renderDsp(p, source, 24000, &note, 1);
+    p.filter.eqGain = -12;
+    const auto cut = renderDsp(p, source, 24000, &note, 1);
+    require(toneEnergy(boost.left, 300) > toneEnergy(cut.left, 300) * 150,
+            "EQ GAIN controls a real peaking EQ rather than only a display value");
+    p.filter.machine = FilterMachine::CombPlus; p.cutoff = 400; p.filter.combFeedback = .85f;
+    const auto combPlus = renderDsp(p, source, 24000, &note, 1);
+    p.filter.machine = FilterMachine::CombMinus;
+    const auto combMinus = renderDsp(p, source, 24000, &note, 1);
+    require(energy(combPlus.left) > .01 && energy(combMinus.left) > .01 && combPlus.left != combMinus.left,
+            "COMB+ and COMB- are audible and provide opposite-feedback responses");
+    bounded(combPlus); bounded(combMinus);
+    p.filter.machine = FilterMachine::Legacy; p.filter.type = 0; p.cutoff = 1000;
+    const auto legacyLow = renderDsp(p, source, 24000, &note, 1);
+    p.filter.type = 1;
+    const auto legacyHigh = renderDsp(p, source, 24000, &note, 1);
+    require(toneEnergy(legacyLow.left, 300) > toneEnergy(legacyHigh.left, 300) * 40,
+            "the hardware Legacy filter switch selects lowpass or highpass independently of old VST playback");
+
+    p = dry(); p.machine = Machine::Oneshot; p.filter.base = 100;
+    const auto base = renderDsp(p, source, 24000, &note, 1);
+    p.filter.base = 0; p.filter.width = 60;
+    const auto width = renderDsp(p, source, 24000, &note, 1);
+    require(toneEnergy(base.left, 7000) > toneEnergy(base.left, 300) * 100
+            && toneEnergy(width.left, 300) > toneEnergy(width.left, 7000) * 100,
+            "BASE and WIDTH affect the serial highpass and lowpass band of the audio path");
+
+    p = dry(); p.machine = Machine::Oneshot; p.cutoff = 200;
+    p.filter.machine = FilterMachine::Multimode; p.filter.envDepth = 127;
+    p.filter.envelope.attack = .0001f; p.filter.envelope.decay = .05f;
+    const auto envelope = renderDsp(p, sine(4000), 10000, &note, 1);
+    TriggerEvent noFilter = note; noFilter.filterTrig = false;
+    const auto untriggered = renderDsp(p, sine(4000), 10000, &noFilter, 1);
+    require(energy(envelope.left, 50, 300) > energy(untriggered.left, 50, 300) * 100
+            && energy(envelope.left, 50, 300) > energy(envelope.left, 6000, 6250) * 100,
+            "FLTR ENV sweeps audible frequency and FLT.T off leaves the envelope untriggered");
+    p.filter.envDelay = .01f;
+    const auto delayed = renderDsp(p, sine(4000), 10000, &note, 1);
+    require(energy(delayed.left, 600, 800) > energy(delayed.left, 200, 400) * 100,
+            "FLTR DEL delays the envelope attack while source audio continues immediately");
+    p.filter.envDelay = 0; p.filter.envelope.decay = .001f;
+    p.filter.envelope.sustain = 1; p.filter.envelope.release = .01f;
+    std::array<TriggerEvent, 2> releasedNotes{note, TriggerEvent{1000, 0, 0, 0, 60, 0, false, true}};
+    const auto released = renderDsp(p, sine(4000), 6000, releasedNotes.data(), 2);
+    require(energy(released.left, 500, 800) > energy(released.left, 3000, 3300) * 100,
+            "MIDI note-off releases the filter envelope even when the amplitude uses Legacy decay");
+}
+
+void testIntegratedTrackFxAndChorusRouting()
+{
+    const TriggerEvent note{0, 0, 1, 0, 60};
+    auto p = dry(); p.machine = Machine::Oneshot;
+    const auto original = renderDsp(p, sine(4000), 20000, &note, 1);
+    p.trackFx.srr = 96;
+    const auto srr = renderDsp(p, sine(4000), 20000, &note, 1);
+    require(srr.left != original.left && energy(srr.left) > 1, "SRR modifies the engine's actual rendered signal");
+    p.cutoff = 500; p.trackFx.srrPre = true;
+    const auto before = renderDsp(p, sine(4000), 20000, &note, 1);
+    p.trackFx.srrPre = false;
+    const auto after = renderDsp(p, sine(4000), 20000, &note, 1);
+    require(before.left != after.left && energy(before.left) > energy(after.left) * 5,
+            "SRR ROUT changes audible filter routing rather than only automation state");
+    p = dry(); p.machine = Machine::Oneshot; p.bitReduction = 4;
+    const auto bits = renderDsp(p, sine(4000), 20000, &note, 1);
+    require(bits.left != original.left && energy(bits.left) > 1, "hardware BR has its own audible 1..16-bit control");
+    p = dry(); p.machine = Machine::Oneshot; p.cutoff = 450; p.drive = .8f;
+    const auto preDrive = renderDsp(p, sine(300), 24000, &note, 1);
+    p.trackFx.drivePre = false;
+    const auto postDrive = renderDsp(p, sine(300), 24000, &note, 1);
+    require(toneEnergy(postDrive.left, 900) > toneEnergy(preDrive.left, 900) * 3,
+            "OD POST creates harmonics after filtering while OD PRE lets the filter attenuate them");
+
+    p = dry(); p.machine = Machine::Oneshot; p.trackFx.chorusSend = 1;
+    ChorusParams chorus; chorus.volume = 1;
+    const auto wet = renderDsp(p, constant(64), 6000, &note, 1, chorus);
+    require(energy(wet.left, 500, 2000) > .01, "track CHO SEND feeds an audible stereo chorus tail");
+    auto stereoImpulse = std::make_shared<Sample>(); stereoImpulse->sampleRate = sampleRate;
+    stereoImpulse->left.assign(64, .2f); stereoImpulse->right.assign(64, 0);
+    const auto normal = renderDsp(p, stereoImpulse, 6000, &note, 1, chorus);
+    chorus.width = -1;
+    const auto swapped = renderDsp(p, stereoImpulse, 6000, &note, 1, chorus);
+    require(energy(normal.left, 500, 2000) > .01 && energy(normal.right, 500, 2000) == 0
+            && energy(swapped.right, 500, 2000) > .01 && energy(swapped.left, 500, 2000) == 0,
+            "negative chorus WIDTH swaps the stereo wet channels without affecting the dry source");
+
+    const auto routeTail = [&](bool reverb)
+    {
+        auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage; initialise(engine, constant(64)); engine.setTrackParams(0, p);
+        FxParams effects; effects.delayMix = reverb ? 0 : 1; effects.feedback = 0;
+        effects.delayBeats = .03125f; effects.reverbMix = reverb ? 1 : 0; engine.setFx(effects);
+        ChorusParams route; route.volume = 0; route.delaySend = reverb ? 0 : 1;
+        route.reverbSend = reverb ? 1 : 0; engine.setChorus(route);
+        Audio out(10000); engine.process(out.left.data(), out.right.data(), 10000, Transport{}, &note, 1);
+        return out;
+    };
+    require(energy(routeTail(false).left, 1100, 4000) > .01
+            && energy(routeTail(true).left, 2500, 10000) > .001,
+            "chorus independently routes its wet return into tempo delay and reverb");
+    auto baselineStorage = std::make_unique<Engine>(); auto& baseline = *baselineStorage;
+    auto restartedStorage = std::make_unique<Engine>(); auto& restarted = *restartedStorage;
+    for (auto* engine : {&baseline, &restarted})
+    {
+        initialise(*engine, constant(64)); engine->setTrackParams(0, p); engine->setChorus(chorus);
+        Audio first(256); engine->process(first.left.data(), first.right.data(), 256, Transport{}, &note, 1);
+    }
+    restarted.restartSequencer();
+    Audio uninterrupted(2000), tail(2000);
+    baseline.process(uninterrupted.left.data(), uninterrupted.right.data(), 2000, Transport{});
+    restarted.process(tail.left.data(), tail.right.data(), 2000, Transport{});
+    require(tail.left == uninterrupted.left && tail.right == uninterrupted.right && energy(tail.right) > .01,
+            "a pattern restart preserves source voices and pending send-effect tails");
+    restarted.reset(); restarted.process(tail.left.data(), tail.right.data(), 2000, Transport{});
+    require(energy(tail.left) == 0 && energy(tail.right) == 0, "reset clears chorus as well as delay and reverb");
+}
+
+void testCompleteDspRealtimeAndInvalidControls()
+{
+    auto engineStorage = std::make_unique<Engine>(); auto& engine = *engineStorage; engine.prepare(sampleRate, 127); const auto source = sine();
+    for (int track = 0; track < numTracks; ++track)
+    {
+        auto p = dry(); p.machine = track % 2 == 0 ? Machine::Stretch : Machine::Werp;
+        p.playback = PlaybackMode::ForwardLoop; p.segmentMode = PlaybackMode::ReverseLoop;
+        p.amplitudeEnvelope = {EnvelopeMode::Adsr, .002f, 0, .01f, .8f, .1f, false, true};
+        p.filter.machine = static_cast<FilterMachine>(1 + track % 6);
+        p.filter.envDepth = 32; p.filter.base = 4; p.filter.width = 110; p.filter.eqGain = 6;
+        p.trackFx.srr = 20; p.trackFx.srrPre = track % 2 == 0;
+        p.drive = .2f; p.trackFx.drivePre = track % 2 != 0;
+        p.trackFx.chorusSend = .2f; p.bitReduction = 12; p.ampVolume = .6f;
+        for (int lfo = 0; lfo < 3; ++lfo)
+        {
+            p.lfos[lfo].depth = 12; p.lfos[lfo].multiplier = 64;
+            p.lfos[lfo].destination = lfo == 0 ? LfoDestination::Attack : lfo == 1 ? LfoDestination::Cutoff : LfoDestination::BitDepth;
+        }
+        engine.setSample(track, source); engine.setTrackParams(track, p);
+        Step step; step.enabled = step.advanced = true; step.retrig.enabled = true;
+        step.noteLengthBeats = .5f; step.retrig.rateIndex = 12; engine.setStep(track, 0, step);
+    }
+    ChorusParams chorus; chorus.volume = .3f; chorus.delaySend = chorus.reverbSend = .2f; engine.setChorus(chorus);
+    Audio output(8192); Transport transport; transport.playing = true; transport.bpm = 180;
+    allocations = deallocations = 0; countAllocations = true;
+    engine.process(output.left.data(), output.right.data(), 8192, transport);
+    countAllocations = false;
+    require(allocations == 0 && deallocations == 0 && energy(output.left) > 1,
+            "sixteen granular/envelope/filter/SRR tracks, 48 LFOs, retrigs and chorus allocate or free no memory");
+    bounded(output);
+    auto p = dry(); p.machine = Machine::Oneshot;
+    p.amplitudeEnvelope.mode = static_cast<EnvelopeMode>(999);
+    p.amplitudeEnvelope.attack = p.amplitudeEnvelope.sustain = std::numeric_limits<float>::quiet_NaN();
+    p.filter.machine = static_cast<FilterMachine>(999); p.filter.envDepth = std::numeric_limits<float>::infinity();
+    p.filter.envDelay = p.filter.envelope.release = p.trackFx.srr = p.bitReduction = std::numeric_limits<float>::quiet_NaN();
+    p.ampVolume = std::numeric_limits<float>::infinity();
+    engine.reset(); engine.setTrackParams(0, p); bounded(triggerAudio(engine, 1024));
+}
 }
 
 int main()
@@ -464,7 +1046,19 @@ int main()
         {"sample synchronization and replacement",testSampleReplacement},
         {"envelope, filter, drive and bit reduction",testEnvelopeFilterDriveAndBitReduction},
         {"tempo delay, reverb and reset",testEffectTailsAndReset},
-        {"finite output and allocation-free processing",testFiniteInputsAndRealtimeAllocation}
+        {"finite output and allocation-free processing",testFiniteInputsAndRealtimeAllocation},
+        {"Oneshot regions, loop position and exact Legacy path",testMachineRegionsAndLegacy},
+        {"Grid, manual slices, NOTE and slice locks",testGridAndManualSlice},
+        {"Repitch, Stretch and Werp tempo/pitch independence",testTempoMachines},
+        {"three LFOs, modes, phase, slew and Legacy opt-in",testLfoModesAndLegacyOptIn},
+        {"allocation-free granular/LFO stress and invalid inputs",testNewMachineRealtimeAndFinite},
+        {"advanced conditions, PRE/NEI order, FILL and first/last cycles",testAdvancedConditionsAndNeighborOrder},
+        {"advanced RATE/VFAD retrigs, track speed and seeded probability",testAdvancedRetrigsSpeedsAndProbability},
+        {"lock trigs and allocation-free advanced sequencing",testLockTrigsAndSequencerRealtime},
+        {"AHD/ADSR, hold, gate releases, reset and independent AMP VOL",testNewAmplitudeGatesAndVolume},
+        {"integrated filter machines, FLT.T, envelopes and BASE/WIDTH",testIntegratedFilterMachinesEnvelopeAndBaseWidth},
+        {"integrated BR/SRR/OD routing, chorus and send-effect tails",testIntegratedTrackFxAndChorusRouting},
+        {"complete 16-track DSP allocation/free stress and invalid controls",testCompleteDspRealtimeAndInvalidControls}
     };
     int failed=0;
     for (const auto& test:tests)

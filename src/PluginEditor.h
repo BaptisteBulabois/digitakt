@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "engine/PatternChain.h"
 #include <juce_gui_extra/juce_gui_extra.h>
 #include <functional>
 
@@ -27,13 +28,14 @@ private:
     class StepPad;
     class Waveform;
     enum class Family { Trig, Source, Filter, Amp, Fx, Mod };
-    enum class View { Parameters, StepTools, SendFx };
+    enum class View { Parameters, StepTools, SendFx, SliceEditor, Patterns, Song };
     enum class ValueFormat { Number, Integer, Percent, Pitch, Hertz, Milliseconds, Seconds, Beats };
-    enum class BindingKind { Unavailable, Parameter, Step, Playback };
+    enum class BindingKind { Unavailable, Parameter, Step, Playback, Custom };
     struct Binding
     {
         BindingKind kind = BindingKind::Unavailable;
         juce::String parameterID, stepField;
+        std::function<double()> read;
     };
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
@@ -55,6 +57,31 @@ private:
                   double low, double high, double interval, ValueFormat, const juce::String& tooltip);
     void bindUnavailable(int slot, const juce::String& label, const juce::String& reason);
     void bindPlayback(int slot);
+    void bindChoice(int slot, const juce::String& name, const juce::String& label,
+                    const juce::StringArray& choices, const juce::String& tooltip);
+    void bindCustom(int slot, const juce::String& label, double low, double high, double interval,
+                    ValueFormat, const juce::String& tooltip, std::function<double()> read,
+                    std::function<void(double)> write);
+    void showMachineMenu();
+    void showFilterMachineMenu();
+    void selectPatternPad(int);
+    void selectSong(int);
+    void refreshArrangementControls();
+    void editSongRow(const std::function<void(takt::SongRow&)>&);
+    void showSongMuteMenu();
+    void applyChain();
+    void showSliceMenu();
+    void openSliceEditor();
+    void moveSlice(int delta);
+    void editSlicePoint(int point, float value);
+    void allocateSliceLocks(bool random);
+    void confirmAction();
+    void finishControlAll(bool cancel);
+    void cancelDestinationPreview();
+    int currentMachine() const;
+    int currentSliceCount() const;
+    takt::SlicePoint effectiveSlicePoint(int index) const;
+    float snapZeroCrossing(float position) const;
     void formatSlider(juce::Slider&, ValueFormat);
     void refreshSteps();
     void refreshControls();
@@ -94,12 +121,24 @@ private:
     juce::TextButton noButton{"NO / BACK"}, helpButton{"?"};
     juce::TextButton funcButton{"FUNC"}, stopButton{"STOP"}, yesButton{"YES"};
     juce::TextButton trkButton{"TRK"}, pageButton{"PAGE"}, toolsButton{"VST TOOLS"};
+    juce::TextButton sourceImportButton{"IMPORT"};
     std::array<juce::TextButton, 3> unavailableButtons;
     std::array<juce::TextButton, 4> centreButtons;
     juce::TextButton leftButton{"<"}, rightButton{">"};
     juce::Label drawerBackdrop;
     juce::ComboBox editScope;
+    juce::ComboBox trackSpeed;
+    juce::TextButton fillButton{"FILL"};
     juce::Slider patternLength;
+    std::array<juce::TextButton, 8> bankButtons;
+    juce::TextEditor chainText;
+    juce::TextButton chainApplyButton{"PLAY CHAIN"}, chainAppendButton{"ADD CURRENT"};
+    juce::TextButton performKitButton{"PERFORM KIT"}, kitSaveButton{"SAVE KIT"}, kitReloadButton{"RELOAD KIT"};
+    juce::ComboBox songSelect, songRowSelect;
+    juce::TextButton songAddButton{"ADD ROW"}, songDeleteButton{"DELETE ROW"};
+    juce::TextButton songPlayButton{"PLAY SONG"}, songQueueButton{"JUMP TO ROW"}, songMutesButton{"ROW MUTES"};
+    juce::TextButton arrangementBackButton{"BACK"};
+    juce::Label arrangementLabel;
     juce::Label sampleLabel, sampleInfoLabel, statusLabel, helpLabel;
     std::vector<std::unique_ptr<SliderAttachment>> controlAttachments;
     std::unique_ptr<SliderAttachment> levelAttachment;
@@ -108,6 +147,14 @@ private:
     std::vector<std::unique_ptr<ButtonAttachment>> globalButtonAttachments;
     std::unique_ptr<juce::FileChooser> fileChooser;
     int selectedTrack = 0, selectedStep = 0, selectedPage = 0;
+    int selectedBank = 0, selectedSong = 0, selectedSongRow = 0, sendFxPage = 0;
+    int displayedAmpMode = -1, displayedFilterMachine = -1, displayedSongRows = -1;
+    int selectedSlice = 0, displayedMachine = -1;
+    int heldStep = -1;
+    bool linkedSlicePoints = true;
+    double sliceZoom = 1.0, slicePosition = 0.0, sliceVerticalZoom = 1.0;
+    juce::String pendingDestination;
+    float previousDestination = 0.0f;
     Family family = Family::Source;
     View view = View::Parameters;
     std::array<int, 6> parameterPages{};

@@ -71,3 +71,53 @@ L'installation et le comportement de 0.2.0 dans Live nécessitent le retour de
 l'utilisateur ; les tests JUCE ne constituent pas un test automatisé d'Ableton
 Live. Le test avec le véritable ancien module et la comparaison de rendu ont
 été exécutés sous Linux, comme décrit ci-dessus.
+
+## Branche de développement 0.3.0
+
+Le 9 octobre 2026, `bash scripts/build.sh` construit VST3 et application
+autonome Linux. Les cinq cibles CTest passent : `engine`, `pattern_chain`,
+`sequencer_rules`, `amp_filter` et `plugin_processor`.
+
+La suite moteur comporte 24 groupes couvrant notamment les machines SRC,
+48 LFO actifs, conditions chronologiques PRE/NEI, retriggers entre blocs,
+portes MIDI/séquenceur, enveloppes, filtres, SRR/BR et chorus. Le stress de
+rendu des seize pistes vérifie zéro allocation et zéro libération sur le
+thread de traitement.
+
+Les tests du processeur vérifient les 1 377 paramètres, avec les 265 premiers
+identifiants, indices et plages inchangés, ainsi que :
+
+- Rappel des machines, trois LFO par piste, slices, règles avancées et DSP ;
+  rejet d'états invalides et retour aux valeurs Legacy lors de la lecture
+  de `TAKTII_STATE_1` dans une instance déjà modifiée.
+- Audio effectif des commandes AMP/FLTR/FX, note-off ADSR, Control All,
+  sauvegarde temporaire et presse-papiers typé.
+- Banques A01/B02/H16, pool de samples partagé, seize songs, transitions aux
+  frontières musicales, mutes, Perform Kit et édition avant rafraîchissement
+  de l'interface.
+- Rappel d'un kit Perform modifié distinct du kit stocké, rendu après
+  synchronisation de l'interface et nouvelles sauvegardes/réouvertures.
+- Migration STATE_1 vers STATE_2 puis nouvelle ouverture, conservant le
+  placement absolu aux positions PPQ 1,75 et 2 du transport host.
+
+La validation Xvfb avec `TaktTests --gui … --host … --legacy … --render …`+passe : navigation des six machines, trois LFO, AMP/EQ/FX/TRIG, Control All,
+banques et édition/démarrage de songs ; gestes d'automation équilibrés et
+raccourcis Windows sans caractère texte. Le test Song traite réellement
+la commande audio et sa frontière de pattern avant de vérifier l'activation.
+
+Le bundle VST3 0.3 est chargé et rendu dans un host JUCE avec automation et
+rappel. Les véritables modules 0.1 et 0.2 préservés produisent chacun un état
+rechargé par 0.3 : seize samples, 128 pas, locks, paramètres et rendu MIDI
+identiques, puis comparaison audio des seeks host après migration et nouvelle
+sauvegarde. Tous les modules sont arrêtés et préparés dans les mêmes conditions.
+Les trois identifiants de classe VST3 sont conservés entre 0.1, 0.2 et 0.3.
+
+La capture [du panneau 0.3](images/takt-ii-0.3.png) a été revue visuellement ;
+le rendu hors ligne de quatre mesures, stéréo 48 kHz, passe également.
+Le popup natif Slice Editor n'est pas automatisé dans la suite GUI ; les
+points, grilles et leur rappel sont vérifiés au niveau du processeur.
+
+La compilation Windows est lancée séparément sur la branche de développement.
+Ces résultats ne constituent pas un essai de 0.3 dans Ableton Live ni une
+comparaison du DSP avec le matériel. Les limites de workflow restent dans le
+[guide 0.3](WORKFLOW_0_3.md).

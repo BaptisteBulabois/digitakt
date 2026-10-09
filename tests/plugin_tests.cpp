@@ -138,7 +138,8 @@ void checkEqualAudio(const juce::AudioBuffer<float>& actual,
 
 void testMidiAndBuses()
 {
-    TaktAudioProcessor processor;
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
     check(processor.getTotalNumInputChannels() == 0 && processor.getTotalNumOutputChannels() == 2,
           "Instrument must expose a stereo output without an audio input");
     auto layout = processor.getBusesLayout();
@@ -184,7 +185,8 @@ void testMidiAndBuses()
 void testSampleImportAndResampling(const juce::File& mono, const juce::File& stereo,
                                   const juce::File& directory)
 {
-    TaktAudioProcessor processor;
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
     configureDry(processor);
     for (int track = 0; track < takt::numTracks; ++track)
     {
@@ -236,7 +238,8 @@ void testSampleImportAndResampling(const juce::File& mono, const juce::File& ste
 
 void testParameters(const juce::File& mono)
 {
-    TaktAudioProcessor processor;
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
     configureDry(processor);
     juce::String error;
     check(processor.loadSample(0, mono, error), error.toStdString());
@@ -276,7 +279,16 @@ void compareSteps(const takt::Step& a, const takt::Step& b)
               && a.pitch == b.pitch && a.cutoff == b.cutoff && a.lockPitch == b.lockPitch
               && a.lockCutoff == b.lockCutoff && a.conditionEvery == b.conditionEvery
               && a.conditionOffset == b.conditionOffset && a.retrigs == b.retrigs
-              && a.microtiming == b.microtiming, "A sequencer step or parameter lock changed in state recall");
+              && a.microtiming == b.microtiming && a.note == b.note && a.slice == b.slice
+              && a.lockSlice == b.lockSlice && a.lfoTrig == b.lfoTrig && a.filterTrig == b.filterTrig
+              && a.advanced == b.advanced && a.lockTrig == b.lockTrig
+              && a.noteLengthBeats == b.noteLengthBeats && a.rule.condition == b.rule.condition
+              && a.rule.inverted == b.rule.inverted && a.rule.cycleA == b.rule.cycleA
+              && a.rule.cycleB == b.rule.cycleB && a.rule.fill == b.rule.fill
+              && a.retrig.enabled == b.retrig.enabled && a.retrig.rateIndex == b.retrig.rateIndex
+              && a.retrig.fadeLengthBeats == b.retrig.fadeLengthBeats
+              && a.retrig.velocityFade == b.retrig.velocityFade,
+          "A sequencer step or parameter lock changed in state recall");
 }
 
 using PatternSteps = std::array<std::array<takt::Step, takt::maxSteps>, takt::numTracks>;
@@ -324,17 +336,18 @@ juce::MemoryBlock stateOf(TaktAudioProcessor& processor)
 juce::ValueTree readStateTree(const juce::MemoryBlock& state)
 {
     juce::MemoryInputStream stream(state, false);
-    check(stream.readString() == "TAKTII_STATE_1", "Unexpected state signature");
+    const auto signature = stream.readString();
+    check(signature == "TAKTII_STATE_1" || signature == "TAKTII_STATE_2", "Unexpected state signature");
     auto tree = juce::ValueTree::readFromStream(stream);
     check(tree.isValid(), "Cannot decode test state tree");
     return tree;
 }
 
-juce::MemoryBlock writeStateTree(const juce::ValueTree& tree)
+juce::MemoryBlock writeStateTree(const juce::ValueTree& tree, const char* signature = "TAKTII_STATE_2")
 {
     juce::MemoryBlock state;
     juce::MemoryOutputStream stream(state, false);
-    stream.writeString("TAKTII_STATE_1");
+    stream.writeString(signature);
     tree.writeToStream(stream);
     return state;
 }
@@ -354,7 +367,10 @@ void checkSafeStep(const takt::Step& step)
 
 void testState(const juce::File& mono, const juce::File& stereo)
 {
-    TaktAudioProcessor source, restored;
+    auto sourceStorage = std::make_unique<TaktAudioProcessor>();
+    auto& source = *sourceStorage;
+    auto restoredStorage = std::make_unique<TaktAudioProcessor>();
+    auto& restored = *restoredStorage;
     configureDry(source);
     source.setParameter("tempo", 143.0f);
     source.setParameter("swing", 0.25f);
@@ -420,7 +436,7 @@ void testState(const juce::File& mono, const juce::File& stereo)
     restored.setStateInformation(state.getData(), static_cast<int>(state.getSize() / 2));
     check(stateOf(restored) == previous, "Truncated state partially changed the instrument");
     juce::MemoryInputStream input(state, false);
-    check(input.readString() == "TAKTII_STATE_1", "Unexpected state signature");
+    check(input.readString() == "TAKTII_STATE_2", "Unexpected current state signature");
     auto damagedTree = juce::ValueTree::readFromStream(input);
     juce::MemoryBlock badAudio("broken", 6);
     damagedTree.getChildWithName("SEQUENCER").getChild(0)
@@ -505,7 +521,8 @@ public:
 };
 
 juce::AudioBuffer<float> renderWithHost(TaktAudioProcessor& processor, TestPlayHead& host,
-                                      const std::vector<int>& sizes, int total, double bpm)
+                                      const std::vector<int>& sizes, int total, double bpm,
+                                      int startFrame = 0)
 {
     juce::AudioBuffer<float> audio(2, total);
     int cursor = 0;
@@ -513,11 +530,52 @@ juce::AudioBuffer<float> renderWithHost(TaktAudioProcessor& processor, TestPlayH
     while (cursor < total)
     {
         const int count = std::min(sizes[block++ % sizes.size()], total - cursor);
-        host.set(cursor * bpm / (60.0 * testRate), bpm, true);
+        host.set((startFrame + cursor) * bpm / (60.0 * testRate), bpm, true);
         const auto next = process(processor, count);
         for (int channel = 0; channel < 2; ++channel)
             audio.copyFrom(channel, cursor, next, channel, 0, count);
         cursor += count;
+    }
+    return audio;
+}
+
+juce::AudioBuffer<float> renderMidi(TaktAudioProcessor& processor, int total,
+                                  int offAt = -1, int midiNote = 36)
+{
+    juce::AudioBuffer<float> audio(2, total);
+    for (int cursor = 0; cursor < total; cursor += testBlock)
+    {
+        const int count = std::min(testBlock, total - cursor);
+        juce::MidiBuffer events;
+        if (cursor == 0) events.addEvent(juce::MidiMessage::noteOn(1, midiNote, juce::uint8(110)), 0);
+        if (offAt >= cursor && offAt < cursor + count)
+            events.addEvent(juce::MidiMessage::noteOff(1, midiNote), offAt - cursor);
+        const auto next = process(processor, count, events);
+        for (int channel = 0; channel < 2; ++channel)
+            audio.copyFrom(channel, cursor, next, channel, 0, count);
+    }
+    return audio;
+}
+
+float audioDifference(const juce::AudioBuffer<float>& a, const juce::AudioBuffer<float>& b)
+{
+    check(a.getNumSamples() == b.getNumSamples(), "Cannot compare different render durations");
+    float result = 0;
+    for (int channel = 0; channel < 2; ++channel)
+        for (int frame = 0; frame < a.getNumSamples(); ++frame)
+            result = std::max(result, std::abs(a.getSample(channel, frame) - b.getSample(channel, frame)));
+    return result;
+}
+
+juce::AudioBuffer<float> renderSequence(TaktAudioProcessor& processor, int total)
+{
+    juce::AudioBuffer<float> audio(2, total);
+    for (int cursor = 0; cursor < total; cursor += testBlock)
+    {
+        const int count = std::min(testBlock, total - cursor);
+        const auto next = process(processor, count);
+        for (int channel = 0; channel < 2; ++channel)
+            audio.copyFrom(channel, cursor, next, channel, 0, count);
     }
     return audio;
 }
@@ -544,11 +602,635 @@ private:
     TaktAudioProcessor& processor;
 };
 
+void testMachinesAndModulationState()
+{
+    auto sourceStorage = std::make_unique<TaktAudioProcessor>();
+    auto& source = *sourceStorage;
+    auto restoredStorage = std::make_unique<TaktAudioProcessor>();
+    auto& restored = *restoredStorage;
+    const auto& all = source.getParameters();
+    check(all.size() > 265, "Machine/LFO parameters were not appended");
+    const char* globals[] = { "play", "hostSync", "tempo", "swing", "master", "delayMix",
+                             "feedback", "delayBeats", "reverbMix" };
+    const char* legacyTrack[] = { "gain", "pan", "pitch", "cutoff", "resonance", "attack", "decay",
+        "drive", "bitDepth", "start", "end", "delaySend", "reverbSend", "reverse", "mute", "loop" };
+    for (int index = 0; index < 265; ++index)
+    {
+        auto* identified = dynamic_cast<juce::AudioProcessorParameterWithID*>(all[index]);
+        const auto expected = index < 9 ? juce::String(globals[index])
+            : TaktAudioProcessor::trackParameterID((index - 9) / 16, legacyTrack[(index - 9) % 16]);
+        check(identified && identified->paramID == expected, "A published parameter index or ID moved");
+    }
+    // A preserved identifier with a changed normalisation range still breaks
+    // an existing host automation lane. Check both endpoints and skew.
+    const std::array<std::array<float, 3>, 9> globalRanges{{
+        {{0, 1, 1}}, {{0, 1, 1}}, {{30, 300, 1}}, {{0, .75f, 1}}, {{0, 1, 1}},
+        {{0, 1, 1}}, {{0, .9f, 1}}, {{.125f, 2, 1}}, {{0, 1, 1}} }};
+    const std::array<std::array<float, 3>, 16> trackRanges{{
+        {{0, 1.5f, 1}}, {{-1, 1, 1}}, {{-36, 36, 1}}, {{20, 20000, .25f}},
+        {{0, .95f, 1}}, {{.0001f, 1, .3f}}, {{.01f, 10, .35f}}, {{0, 1, 1}},
+        {{4, 24, 1}}, {{0, .99f, 1}}, {{.01f, 1, 1}}, {{0, 1, 1}},
+        {{0, 1, 1}}, {{0, 1, 1}}, {{0, 1, 1}}, {{0, 1, 1}} }};
+    for (int index = 0; index < 265; ++index)
+    {
+        const auto* parameter = dynamic_cast<const juce::RangedAudioParameter*>(all[index]);
+        check(parameter != nullptr, "A published parameter lost its range");
+        const auto& range = parameter->getNormalisableRange();
+        const auto expected = index < 9 ? globalRanges[static_cast<size_t>(index)]
+            : trackRanges[static_cast<size_t>((index - 9) % 16)];
+        check(range.start == expected[0] && range.end == expected[1] && range.skew == expected[2],
+              "A published automation normalisation range changed");
+    }
+    for (int index = 265; index < all.size(); ++index)
+    {
+        auto* parameter = dynamic_cast<juce::RangedAudioParameter*>(all[index]);
+        check(parameter != nullptr, "An extension has no automatable range");
+        const auto id = dynamic_cast<juce::AudioProcessorParameterWithID*>(parameter)->paramID;
+        const float normalized = parameter->getDefaultValue() < .5f ? .75f : .25f;
+        source.setParameter(id, parameter->convertFrom0to1(normalized));
+    }
+    for (int track = 0; track < takt::numTracks; ++track)
+    {
+        source.setParameter(TaktAudioProcessor::trackParameterID(track, "machine"), static_cast<float>(1 + track % 6));
+        source.setParameter(TaktAudioProcessor::trackParameterID(track, "playMode"), static_cast<float>(track % 4));
+        source.setParameter(TaktAudioProcessor::trackParameterID(track, "sourceLength"), .5f);
+        source.setParameter(TaktAudioProcessor::trackParameterID(track, "bars"), 2);
+        source.setParameter(TaktAudioProcessor::trackParameterID(track, "sliceByNote"), 1);
+        source.setParameter(TaktAudioProcessor::trackParameterID(track, "speedIndex"), static_cast<float>(track % 7));
+        source.setParameter(TaktAudioProcessor::trackParameterID(track, "ampMode"), 2);
+        source.setParameter(TaktAudioProcessor::trackParameterID(track, "ampSustain"), .42f);
+        source.setParameter(TaktAudioProcessor::trackParameterID(track, "filterMachine"), static_cast<float>(1 + track % 6));
+        source.setParameter(TaktAudioProcessor::trackParameterID(track, "filterEnvDepth"), 22);
+        source.setParameter(TaktAudioProcessor::trackParameterID(track, "srr"), 32);
+        source.setParameter(TaktAudioProcessor::trackParameterID(track, "chorusSend"), .4f);
+        check(source.createSliceGrid(track, 8), "Cannot create slice grid");
+        check(source.setSlicePoint(track, 3, {.2f, .33f, .24f}), "Cannot edit a slice point");
+        for (int lfo = 1; lfo <= 3; ++lfo)
+        {
+            const auto prefix = "lfo" + juce::String(lfo) + "_";
+            source.setParameter(TaktAudioProcessor::trackParameterID(track, prefix + "depth"), static_cast<float>(lfo * 7));
+            source.setParameter(TaktAudioProcessor::trackParameterID(track, prefix + "destination"), static_cast<float>(1 + (track + lfo) % 14));
+            source.setParameter(TaktAudioProcessor::trackParameterID(track, prefix + "mode"), static_cast<float>(lfo));
+            source.setParameter(TaktAudioProcessor::trackParameterID(track, prefix + "wave"), static_cast<float>(lfo));
+            source.setParameter(TaktAudioProcessor::trackParameterID(track, prefix + "phase"), 40);
+            source.setParameter(TaktAudioProcessor::trackParameterID(track, prefix + "bpmSync"), 0);
+        }
+        auto step = musicalStep(track);
+        step.note = 24 + track; step.slice = track; step.lockSlice = true; step.lfoTrig = false;
+        step.filterTrig = false;
+        step.advanced = true; step.lockTrig = track % 2 == 0;
+        step.rule.condition = takt::sequencer::Condition::Cycle;
+        step.rule.inverted = true; step.rule.cycleA = 2; step.rule.cycleB = 3;
+        step.rule.fill = takt::sequencer::Fill::Off; step.noteLengthBeats = .75f;
+        step.retrig = { true, 15, .5, -12 };
+        source.setStep(track, 3, step);
+    }
+    source.setParameter("fill", 1); source.setParameter("chorusVolume", .3f);
+    source.setParameter("chorusSpeed", 2);
+    const auto saved = stateOf(source);
+    restored.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    for (auto* parameter : source.getParameters())
+    {
+        const auto id = dynamic_cast<juce::AudioProcessorParameterWithID*>(parameter)->paramID;
+        const auto* ranged = dynamic_cast<const juce::RangedAudioParameter*>(parameter);
+        check(ranged != nullptr
+                  && std::abs(ranged->convertTo0to1(restored.parameterValue(id))
+                              - ranged->convertTo0to1(source.parameterValue(id))) < 1.0e-6f,
+              "An extended parameter changed on recall");
+    }
+    for (int track = 0; track < takt::numTracks; ++track)
+    {
+        compareSteps(source.getStep(track, 3), restored.getStep(track, 3));
+        const auto points = source.getSlicePoints(track), recalled = restored.getSlicePoints(track);
+        for (size_t slice = 0; slice < points.size(); ++slice)
+            check(points[slice].start == recalled[slice].start && points[slice].end == recalled[slice].end
+                      && points[slice].loop == recalled[slice].loop, "A slice edit changed on recall");
+    }
+    source.temporarySavePattern();
+    source.setParameter("t1_machine", 0); source.setParameter("t1_lfo3_depth", -100);
+    source.setParameter("t1_ampMode", 0); source.setParameter("t1_filterEnvDepth", -44);
+    source.setParameter("fill", 0); source.setParameter("chorusVolume", 0);
+    source.createSliceGrid(0, 32);
+    source.temporaryReloadPattern();
+    check(source.parameterValue("t1_machine") == 1 && source.parameterValue("t1_lfo3_depth") == 21
+              && source.getSlicePoints(0)[3].start == .2f && source.parameterValue("t1_ampMode") == 2
+              && source.parameterValue("t1_filterEnvDepth") == 22 && source.parameterValue("fill") == 1
+              && std::abs(source.parameterValue("chorusVolume") - .3f) < 1.0e-6f,
+          "TEMP omitted machine/LFO, amp/filter/FX, advanced sequence or slice settings");
+    const auto previous = stateOf(restored);
+    auto damaged = readStateTree(previous);
+    damaged.getChildWithName("SEQUENCER").getChild(0).setProperty("slicePoints", juce::var("invalid"), nullptr);
+    const auto corrupt = writeStateTree(damaged);
+    restored.setStateInformation(corrupt.getData(), static_cast<int>(corrupt.getSize()));
+    check(stateOf(restored) == previous, "Invalid slice data partially restored a state");
+
+    auto legacySourceStorage = std::make_unique<TaktAudioProcessor>();
+    auto& legacySource = *legacySourceStorage;
+    const auto legacy = writeStateTree(readStateTree(stateOf(legacySource)), "TAKTII_STATE_1");
+    restored.setStateInformation(legacy.getData(), static_cast<int>(legacy.getSize()));
+    for (int index = 265; index < restored.getParameters().size(); ++index)
+    {
+        auto* parameter = dynamic_cast<juce::RangedAudioParameter*>(restored.getParameters()[index]);
+        check(parameter && std::abs(parameter->getValue() - parameter->getDefaultValue()) < 1.0e-6f,
+              "Loading STATE_1 retained an already selected new machine/LFO parameter");
+    }
+    check(!restored.getStep(0, 3).lockSlice && restored.getStep(0, 3).lfoTrig && restored.getStep(0, 3).filterTrig
+              && restored.getStep(0, 3).note == 60 && restored.getSlicePoints(0)[3].end == 0
+              && !restored.getStep(0, 3).advanced && !restored.getStep(0, 3).lockTrig
+              && restored.getStep(0, 3).noteLengthBeats == .25f,
+          "STATE_1 extension defaults changed");
+    passed("appended stable parameters; STATE_2 machines/three LFOs/slices/step fields; STATE_1 resets legacy defaults");
+}
+
+void testControlAll()
+{
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
+    processor.setParameter("t1_pitch", -12); processor.setParameter("t2_pitch", 4); processor.setParameter("t3_pitch", 31);
+    check(!processor.beginControlAll(-1), "Invalid Control All track accepted");
+    check(processor.beginControlAll(1, 0x0005), "Control All did not begin");
+    check(!processor.beginControlAll(0), "Nested Control All transaction accepted");
+    check(!processor.updateControlAll("tempo", 140), "Global parameter accepted as Control All target");
+    check(processor.updateControlAll("pitch", 14), "Control All could not update pitch");
+    check(processor.parameterValue("t1_pitch") == -2 && processor.parameterValue("t2_pitch") == 14
+              && processor.parameterValue("t3_pitch") == 36 && processor.parameterValue("t4_pitch") == 0,
+          "Control All did not include the active track, respect mask or clamp ranges");
+    processor.updateControlAll("pitch", 9);
+    check(processor.parameterValue("t1_pitch") == -7 && processor.parameterValue("t2_pitch") == 9
+              && processor.parameterValue("t3_pitch") == 36, "Control All accumulated deltas instead of using its baseline");
+    processor.updateControlAll("lfo3_depth", 14);
+    const auto editedStep = musicalStep(5);
+    processor.setStep(0, 7, editedStep);
+    processor.cancelControlAll();
+    check(!processor.isControlAllActive() && processor.parameterValue("t1_pitch") == -12
+              && processor.parameterValue("t2_pitch") == 4 && processor.parameterValue("t3_pitch") == 31
+              && processor.parameterValue("t1_lfo3_depth") == 0 && processor.parameterValue("t2_lfo3_depth") == 0,
+          "Control All cancellation did not restore the touched parameters");
+    compareSteps(processor.getStep(0, 7), editedStep);
+    check(processor.beginControlAll(0, 0), "Empty configured mask excluded the active track");
+    processor.updateControlAll("gain", .2f); processor.commitControlAll();
+    check(!processor.isControlAllActive() && std::abs(processor.parameterValue("t1_gain") - .2f) < 1.0e-6f
+              && std::abs(processor.parameterValue("t2_gain") - .8f) < 1.0e-6f,
+          "Committing Control All reverted or touched an excluded track");
+    passed("Control All active-track inclusion, relative values, clamping, mask, commit and cancellation");
+}
+
+void testExtendedAudio(const juce::File& directory)
+{
+    const auto sample = makeWave(directory, "sustained-effects", 2, 96000, testRate);
+    const auto initialise = [&](TaktAudioProcessor& processor)
+    {
+        configureDry(processor);
+        juce::String error;
+        check(processor.loadSample(0, sample, error), error.toStdString());
+        processor.setParameter("t1_machine", 1);
+        processor.setParameter("t1_playMode", 2);
+        processor.setParameter("t1_decay", 10);
+    };
+    constexpr int frames = 24000;
+    const auto render = [&](const std::function<void(TaktAudioProcessor&)>& changes)
+    {
+        auto processorStorage = std::make_unique<TaktAudioProcessor>();
+        auto& processor = *processorStorage;
+        initialise(processor);
+        changes(processor);
+        processor.prepareToPlay(testRate, testBlock);
+        return renderMidi(processor, frames);
+    };
+    const auto unchanged = render([](TaktAudioProcessor&) {});
+    check(magnitude(unchanged) > .01f, "DSP reference sample is silent");
+    check(magnitude(render([](TaktAudioProcessor& p) { p.setParameter("t1_ampVolume", 0); })) == 0,
+          "AMP VOL zero does not silence its track");
+    for (const auto& effect : std::vector<std::pair<const char*, float>>{
+             {"srr", 100}, {"bitReduction", 4}, {"filterBase", 75}, {"filterWidth", 20}})
+    {
+        const auto changed = render([&](TaktAudioProcessor& p)
+        {
+            p.setParameter("t1_" + juce::String(effect.first), effect.second);
+        });
+        check(audioDifference(unchanged, changed) > 1.0e-4f,
+              std::string("An advertised DSP parameter is inaudible: ") + effect.first);
+    }
+    for (int machine = 1; machine <= 6; ++machine)
+    {
+        const auto filtered = render([&](TaktAudioProcessor& p)
+        {
+            p.setParameter("t1_filterMachine", static_cast<float>(machine));
+            p.setParameter("t1_cutoff", 800);
+            p.setParameter("t1_eqGain", 12);
+            p.setParameter("t1_resonance", .45f);
+        });
+        check(magnitude(filtered) > 1.0e-6f && audioDifference(unchanged, filtered) > 1.0e-4f,
+              "A filter machine does not process audio");
+    }
+    const auto envelopeRender = [&](float depth)
+    {
+        return render([&](TaktAudioProcessor& p)
+        {
+            p.setParameter("t1_filterMachine", 1); p.setParameter("t1_cutoff", 600);
+            p.setParameter("t1_filterEnvDepth", depth); p.setParameter("t1_filterEnvAttack", .02f);
+            p.setParameter("t1_filterEnvDecay", .05f); p.setParameter("t1_filterEnvSustain", .2f);
+        });
+    };
+    check(audioDifference(envelopeRender(0), envelopeRender(48)) > 1.0e-4f,
+          "Filter envelope controls were stored but did not modulate the sounding filter");
+    const auto equalizerRender = [&](float gain)
+    {
+        return render([&](TaktAudioProcessor& p)
+        {
+            p.setParameter("t1_filterMachine", 3); p.setParameter("t1_cutoff", 800);
+            p.setParameter("t1_eqGain", gain); p.setParameter("t1_eqQ", 2);
+        });
+    };
+    check(audioDifference(equalizerRender(-12), equalizerRender(12)) > 1.0e-4f,
+          "EQ gain controls were stored but did not boost/cut audio");
+    const auto preDrive = render([](TaktAudioProcessor& p)
+    {
+        p.setParameter("t1_drive", .8f); p.setParameter("t1_filterMachine", 2);
+        p.setParameter("t1_cutoff", 500); p.setParameter("t1_drivePre", 1);
+    });
+    const auto postDrive = render([](TaktAudioProcessor& p)
+    {
+        p.setParameter("t1_drive", .8f); p.setParameter("t1_filterMachine", 2);
+        p.setParameter("t1_cutoff", 500); p.setParameter("t1_drivePre", 0);
+    });
+    check(audioDifference(preDrive, postDrive) > 1.0e-4f, "Overdrive routing has no audible effect");
+    const auto preReduction = render([](TaktAudioProcessor& p)
+    {
+        p.setParameter("t1_srr", 110); p.setParameter("t1_filterMachine", 2);
+        p.setParameter("t1_cutoff", 500); p.setParameter("t1_srrPre", 1);
+    });
+    const auto postReduction = render([](TaktAudioProcessor& p)
+    {
+        p.setParameter("t1_srr", 110); p.setParameter("t1_filterMachine", 2);
+        p.setParameter("t1_cutoff", 500); p.setParameter("t1_srrPre", 0);
+    });
+    check(audioDifference(preReduction, postReduction) > 1.0e-4f, "SRR routing has no audible effect");
+    const auto chorus = render([](TaktAudioProcessor& p)
+    {
+        p.setParameter("t1_chorusSend", .8f); p.setParameter("chorusVolume", .7f);
+        p.setParameter("chorusDepth", .9f); p.setParameter("chorusSpeed", 2);
+    });
+    check(audioDifference(unchanged, chorus) > 1.0e-4f, "Chorus send/return is disconnected");
+
+    auto gatedStorage = std::make_unique<TaktAudioProcessor>();
+    auto& gated = *gatedStorage;
+    initialise(gated);
+    gated.setParameter("t1_ampMode", 2); gated.setParameter("t1_attack", .0001f);
+    gated.setParameter("t1_decay", .02f); gated.setParameter("t1_ampSustain", .6f);
+    gated.setParameter("t1_ampRelease", .01f);
+    gated.prepareToPlay(testRate, testBlock);
+    const auto sustained = renderMidi(gated, frames);
+    gated.prepareToPlay(testRate, testBlock);
+    const auto released = renderMidi(gated, frames, 12000);
+    check(magnitude(sustained, 20000) > .01f && magnitude(released, 20000) < 1.0e-6f,
+          "MIDI note-off did not release the ADSR gate");
+
+    auto sourceStorage = std::make_unique<TaktAudioProcessor>();
+    auto& source = *sourceStorage;
+    auto recalledStorage = std::make_unique<TaktAudioProcessor>();
+    auto& recalled = *recalledStorage;
+    initialise(source);
+    source.setParameter("t1_ampMode", 2); source.setParameter("t1_ampRelease", .1f);
+    source.setParameter("t1_ampSustain", .45f); source.setParameter("t1_ampVolume", .6f);
+    source.setParameter("t1_filterMachine", 1); source.setParameter("t1_filterType", .6f);
+    source.setParameter("t1_filterEnvDepth", 37); source.setParameter("t1_filterEnvDelay", .012f);
+    source.setParameter("t1_filterKeytrack", .25f); source.setParameter("t1_filterWidth", 110);
+    source.setParameter("t1_srr", 27); source.setParameter("t1_drive", .12f);
+    source.setParameter("t1_bitReduction", 11); source.setParameter("t1_chorusSend", .4f);
+    source.setParameter("chorusVolume", .35f); source.setParameter("chorusHighpass", 400);
+    source.setParameter("chorusWidth", -.3f);
+    source.setParameter("t1_lfo1_destination", 4); source.setParameter("t1_lfo1_wave", 1);
+    source.setParameter("t1_lfo1_mode", 1); source.setParameter("t1_lfo1_depth", 18);
+    const auto saved = stateOf(source);
+    HostStateListener notifications(recalled);
+    recalled.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    check(notifications.notifications == 0, "Project recall marked the host's project dirty");
+    source.prepareToPlay(testRate, testBlock); recalled.prepareToPlay(testRate, testBlock);
+    checkEqualAudio(renderMidi(recalled, frames, 12000), renderMidi(source, frames, 12000), 1.0e-6f,
+                    "Extended AMP/filter/SRR/chorus/LFO project render after recall");
+    passed("effective AMP/filter machines/SRR/BR/drive/chorus controls, MIDI ADSR release and identical recalled DSP audio");
+}
+
+void initialiseArrangement(TaktAudioProcessor& processor, const juce::File& sample)
+{
+    configureDry(processor);
+    for (int track = 0; track < takt::numTracks; ++track) processor.clearTrack(track);
+    juce::String error;
+    check(processor.loadSample(0, sample, error), error.toStdString());
+    processor.setPatternLength(4);
+    processor.setTrackLength(0, 4);
+    takt::Step first;
+    first.enabled = true;
+    processor.setStep(0, 0, first);
+    processor.setParameter("t1_pan", -1);
+    processor.setParameter("tempo", 90);
+    const auto left = processor.getPatternSnapshot(0);
+    check(left != nullptr, "Cannot capture pattern A01");
+    auto right = std::make_unique<TaktAudioProcessor::PatternSnapshot>(*left);
+    right->trackParameters[0][1] = 1; // Published track pan remains index 1.
+    right->globalParameters[2] = 240; // Pattern tempo, distinct from the host.
+    right->lengths[0] = 8;
+    right->steps[0][3] = musicalStep(23);
+    right->slicePoints[0][0] = {.2f, .3f, .2f};
+    check(processor.setPatternSnapshot(17, *right), "Cannot store pattern B02");
+    check(processor.setPatternSnapshot(127, *left), "Cannot store pattern H16");
+}
+
+void testPatternProject(const juce::File& mono)
+{
+    auto sourceStorage = std::make_unique<TaktAudioProcessor>();
+    auto& source = *sourceStorage;
+    auto recalledStorage = std::make_unique<TaktAudioProcessor>();
+    auto& recalled = *recalledStorage;
+    initialiseArrangement(source, mono);
+    check(!source.setCurrentPattern(-1) && !source.setCurrentPattern(128)
+              && !source.queuePattern(128) && !source.getPatternSnapshot(-1),
+          "An invalid bank slot was accepted");
+    const auto left = source.getPatternSnapshot(0);
+    const auto right = source.getPatternSnapshot(17);
+    check(left && right && left->samples[0] == right->samples[0],
+          "Shared pattern samples were duplicated before serialization");
+    check(source.setCurrentPattern(17), "Cannot select pattern B02 while stopped");
+    check(source.getCurrentPattern() == 17 && source.parameterValue("t1_pan") == 1
+              && source.parameterValue("tempo") == 240,
+          "Stopped pattern selection did not restore its kit and tempo");
+    source.setStep(0, 3, musicalStep(7));
+    takt::Song song;
+    song.rowCount = 3; song.endLoop = false; song.tempo = 177;
+    song.rows[0].pattern = {0}; song.rows[0].repeats = 2;
+    song.rows[1].pattern = {17}; song.rows[1].muteMask = 1; song.rows[1].tempo = 201;
+    song.rows[2].pattern = {127}; song.rows[2].length = 6; song.rows[2].swing = .32f;
+    check(source.setSong(15, song), "Cannot save the sixteenth song");
+    check(!source.setSong(16, song) && !source.startSong(-1), "Invalid song slot accepted");
+    const auto saved = stateOf(source);
+    const auto tree = readStateTree(saved);
+    const auto pool = tree.getChildWithName("SAMPLE_POOL");
+    std::set<const takt::Sample*> uniqueSamples;
+    for (int slot : {0, 17, 127})
+        for (const auto& sample : source.getPatternSnapshot(slot)->samples)
+            if (sample) uniqueSamples.insert(sample.get());
+    check(pool.isValid() && pool.getNumChildren() == static_cast<int>(uniqueSamples.size()),
+          "Project sample pool does not deduplicate samples shared by bank patterns");
+    HostStateListener notifications(recalled);
+    recalled.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    check(notifications.notifications == 0 && recalled.getCurrentPattern() == 17,
+          "Project recall changed the active slot or notified a non-parameter host edit");
+    for (int slot : {0, 17, 127})
+    {
+        const auto expected = source.getPatternSnapshot(slot), actual = recalled.getPatternSnapshot(slot);
+        check(expected && actual && expected->patternLength == actual->patternLength
+                  && expected->trackParameters == actual->trackParameters
+                  && expected->globalParameters == actual->globalParameters
+                  && expected->lengths == actual->lengths,
+              "Bank pattern parameters or sequence lengths changed on recall");
+        for (int track = 0; track < takt::numTracks; ++track)
+        {
+            for (int step = 0; step < takt::maxSteps; ++step)
+                compareSteps(expected->steps[static_cast<size_t>(track)][static_cast<size_t>(step)],
+                             actual->steps[static_cast<size_t>(track)][static_cast<size_t>(step)]);
+            const auto a = expected->samples[static_cast<size_t>(track)], b = actual->samples[static_cast<size_t>(track)];
+            check(a && b && a->sampleRate == b->sampleRate && a->left == b->left && a->right == b->right,
+                  "A sample in an inactive bank pattern changed on recall");
+        }
+    }
+    check(recalled.getPatternSnapshot(0)->samples[0] == recalled.getPatternSnapshot(127)->samples[0],
+          "Reopened bank patterns lost their shared sample pool reference");
+    const auto restoredSong = recalled.getSong(15);
+    check(restoredSong.rowCount == 3 && !restoredSong.endLoop && restoredSong.tempo == 177
+              && restoredSong.rows[0].repeats == 2 && restoredSong.rows[1].pattern.index == 17
+              && restoredSong.rows[1].muteMask == 1 && restoredSong.rows[1].tempo == 201
+              && restoredSong.rows[2].length == 6 && restoredSong.rows[2].swing == .32f,
+          "Song rows/repeats/mutes/tempo/swing changed on project recall");
+    source.prepareToPlay(testRate, testBlock); recalled.prepareToPlay(testRate, testBlock);
+    checkEqualAudio(renderMidi(recalled, 6000), renderMidi(source, 6000), 1.0e-6f,
+                    "Reopened active bank kit render");
+    passed("A01/B02/H16 bank recall, all steps and kits, sixteen-song metadata and deduplicated shared project samples");
+}
+
+void testPerformKitRecallLifetime(const juce::File& mono)
+{
+    auto sourceStorage = std::make_unique<TaktAudioProcessor>();
+    auto recalledStorage = std::make_unique<TaktAudioProcessor>();
+    auto reopenedStorage = std::make_unique<TaktAudioProcessor>();
+    auto& source = *sourceStorage;
+    auto& recalled = *recalledStorage;
+    auto& reopened = *reopenedStorage;
+    initialiseArrangement(source, mono);
+    source.setPerformKit(true);
+    source.setParameter("t1_gain", .4f);
+    check(source.setCurrentPattern(17), "Cannot establish a distinct unsaved Perform Kit");
+    const auto saved = stateOf(source);
+    const auto storedPan = [](const juce::MemoryBlock& state)
+    {
+        const auto pattern = readStateTree(state).getChildWithName("BANK").getChildWithProperty("slot", 17);
+        const auto values = pattern["values"];
+        const auto* bytes = values.getBinaryData();
+        check(bytes && bytes->getSize() >= 2 * sizeof(float), "Perform Kit fixture has no stored bank kit");
+        juce::MemoryInputStream stream(*bytes, false);
+        stream.readFloat(); // Track 1 LEVEL, followed by the published PAN.
+        return stream.readFloat();
+    };
+    check(source.parameterValue("t1_pan") == -1 && storedPan(saved) == 1,
+          "Perform Kit fixture does not distinguish its sounding kit from the stored bank kit");
+    recalled.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    source.prepareToPlay(testRate, testBlock); recalled.prepareToPlay(testRate, testBlock);
+    checkEqualAudio(process(recalled, testBlock, note(36)), process(source, testBlock, note(36)),
+                    1.0e-6f, "Initial unsaved Perform Kit project recall");
+    recalled.servicePendingTransitions();
+    source.servicePendingTransitions();
+    check(recalled.parameterValue("t1_pan") == -1
+              && std::abs(recalled.parameterValue("t1_gain") - .4f) < 1.0e-6f,
+          "UI synchronization replaced the unsaved Perform Kit with the stored bank kit");
+    for (int block = 0; block < 6; ++block)
+    {
+        // Saving and mirroring replace control-side snapshots. The audio side
+        // must retain its separate sounding kit throughout, including the
+        // original sample/envelope/filter objects used by the active voice.
+        const auto checkpoint = stateOf(recalled);
+        check(checkpoint.getSize() > 0, "Cannot save an active recalled Perform Kit");
+        recalled.servicePendingTransitions();
+        checkEqualAudio(process(recalled, testBlock), process(source, testBlock), 1.0e-6f,
+                        "Perform Kit voice after project save and UI snapshot synchronization");
+    }
+    const auto resaved = stateOf(recalled);
+    reopened.setStateInformation(resaved.getData(), static_cast<int>(resaved.getSize()));
+    check(reopened.parameterValue("t1_pan") == -1 && storedPan(stateOf(reopened)) == 1,
+          "Re-saving Perform Kit overwrote either the sounding kit or the stored bank kit");
+    source.prepareToPlay(testRate, testBlock); reopened.prepareToPlay(testRate, testBlock);
+    checkEqualAudio(process(reopened, testBlock, note(36)), process(source, testBlock, note(36)),
+                    1.0e-6f, "Perform Kit recall after UI synchronization and second project save");
+    passed("unsaved Perform Kit survives recall, rendering, UI synchronization, snapshot replacement and re-save");
+}
+
+void testLegacyHostOriginMigration(const juce::File& mono)
+{
+    auto sourceStorage = std::make_unique<TaktAudioProcessor>();
+    auto migratedStorage = std::make_unique<TaktAudioProcessor>();
+    auto recalledStorage = std::make_unique<TaktAudioProcessor>();
+    auto& source = *sourceStorage;
+    auto& migrated = *migratedStorage;
+    auto& recalled = *recalledStorage;
+    configureDry(source);
+    source.setParameter("hostSync", 1);
+    for (int track = 0; track < takt::numTracks; ++track) source.clearTrack(track);
+    juce::String error;
+    check(source.loadSample(0, mono, error), error.toStdString());
+    takt::Step step;
+    step.enabled = true;
+    source.setStep(0, 8, step);
+    const auto legacy = writeStateTree(readStateTree(stateOf(source)), "TAKTII_STATE_1");
+    migrated.setStateInformation(legacy.getData(), static_cast<int>(legacy.getSize()));
+    const auto upgraded = stateOf(migrated);
+    recalled.setStateInformation(upgraded.getData(), static_cast<int>(upgraded.getSize()));
+    TestPlayHead host;
+    migrated.setPlayHead(&host); recalled.setPlayHead(&host);
+    migrated.prepareToPlay(testRate, testBlock); recalled.prepareToPlay(testRate, testBlock);
+    host.set(1.75, 120, true);
+    check(magnitude(process(migrated, 96)) == 0 && magnitude(process(recalled, 96)) == 0
+              && recalled.getCurrentStep(0) == 7,
+          "STATE_1 migration/re-save changed an absolute host seek into a local pattern origin");
+    host.set(2, 120, true);
+    const auto expected = process(migrated, testBlock);
+    check(magnitude(expected) > .01f && migrated.getCurrentStep(0) == 8,
+          "Legacy host origin fixture did not reach its absolute eighth step");
+    checkEqualAudio(process(recalled, testBlock), expected, 1.0e-6f,
+                    "Absolute host PPQ seek after STATE_1 to STATE_2 migration and second recall");
+    passed("STATE_1 to STATE_2 re-save/reopen preserves the legacy absolute host PPQ sequence origin");
+}
+
+void testArrangementAudio(const juce::File& mono)
+{
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
+    initialiseArrangement(processor, mono);
+    TestPlayHead host;
+    processor.setPlayHead(&host);
+    processor.setParameter("hostSync", 1);
+    processor.prepareToPlay(testRate, testBlock);
+    const auto first = renderWithHost(processor, host, {97, 512, 381}, 12000, 120);
+    check(first.getMagnitude(0, 0, 6000) > .01f && first.getMagnitude(1, 0, 6000) == 0,
+          "Initial bank pattern did not render its left-panned kit");
+    check(processor.queuePattern(17) && processor.getCurrentPattern() == 0,
+          "Pattern cue switched immediately during host playback");
+    const auto boundary = renderWithHost(processor, host, {381, 512, 97}, 12512, 120, 12000);
+    check(boundary.getMagnitude(1, 0, 12000) == 0
+              && boundary.getMagnitude(1, 12000, 512) > .01f,
+          "Pattern cue did not activate at the exact four-step host-tempo boundary");
+    check(processor.getCurrentPattern() == 17 && processor.getQueuedPattern() == -1,
+          "Render-thread cue transition did not publish its active slot");
+    compareSteps(processor.getStep(0, 3), musicalStep(23));
+    check(processor.getTrackLength(0) == 8 && processor.getSlicePoints(0)[0].start == .2f,
+          "Pattern getters exposed the previous sequence or slices before the editor mirror");
+    const auto postCueEdit = musicalStep(11);
+    processor.setStep(0, 2, postCueEdit);
+    compareSteps(processor.getStep(0, 2), postCueEdit);
+    // No editor timer has run: serialization must capture the sounding pattern,
+    // not the stale APVTS mirror of the previous kit.
+    const auto sounding = stateOf(processor);
+    auto reopenedStorage = std::make_unique<TaktAudioProcessor>();
+    auto& reopened = *reopenedStorage;
+    reopened.setStateInformation(sounding.getData(), static_cast<int>(sounding.getSize()));
+    check(reopened.getCurrentPattern() == 17 && reopened.parameterValue("t1_pan") == 1,
+          "Saving before the editor mirror captured the previous sounding kit");
+    compareSteps(reopened.getStep(0, 2), postCueEdit);
+    compareSteps(reopened.getPatternSnapshot(0)->steps[0][2], takt::Step{});
+    processor.servicePendingTransitions();
+    check(processor.parameterValue("t1_pan") == 1 && processor.isUsingHostClock(),
+          "UI mirror failed or pattern tempo displaced the DAW clock");
+
+    auto internalStorage = std::make_unique<TaktAudioProcessor>();
+    auto& internal = *internalStorage;
+    initialiseArrangement(internal, mono);
+    internal.setParameter("play", 1);
+    internal.prepareToPlay(testRate, testBlock);
+    renderSequence(internal, 16000);
+    check(internal.queuePattern(17), "Cannot cue a pattern with the internal clock");
+    const auto internalBoundary = renderSequence(internal, 16512);
+    check(internalBoundary.getMagnitude(1, 0, 16000) == 0
+              && internalBoundary.getMagnitude(1, 16000, 512) > .01f && !internal.isUsingHostClock(),
+          "Internal pattern tempo did not produce its 90 BPM cue boundary");
+
+    auto pausedStorage = std::make_unique<TaktAudioProcessor>();
+    auto& paused = *pausedStorage;
+    initialiseArrangement(paused, mono);
+    check(paused.setChain({0, 17}), "Cannot establish a chain for STOP/resume validation");
+    paused.setParameter("play", 1); paused.prepareToPlay(testRate, testBlock);
+    renderSequence(paused, 4000); // Half a step at the first pattern's 90 BPM.
+    paused.setParameter("play", 0); renderSequence(paused, 2000);
+    paused.setParameter("play", 1);
+    const auto resumed = renderSequence(paused, 28512);
+    check(resumed.getMagnitude(1, 0, 28000) == 0
+              && resumed.getMagnitude(1, 28000, 512) > .01f,
+          "STOP/resume discarded the partial step or advanced the queued chain while stopped");
+
+    auto chainedStorage = std::make_unique<TaktAudioProcessor>();
+    auto& chained = *chainedStorage;
+    initialiseArrangement(chained, mono);
+    check(chained.setChain({0, 17}) && chained.getChain() == std::vector<int>({0, 17}),
+          "Cannot build a two-pattern chain");
+    chained.setParameter("hostSync", 1); chained.setPlayHead(&host);
+    chained.prepareToPlay(testRate, testBlock);
+    const auto chain = renderWithHost(chained, host, {97, 512, 381}, 48000, 120);
+    check(chain.getMagnitude(0, 0, 512) > .01f && chain.getMagnitude(1, 0, 512) == 0
+              && chain.getMagnitude(1, 24000, 512) > .01f,
+          "Chain metadata did not switch the audio kit at the pattern boundary");
+
+    auto sungStorage = std::make_unique<TaktAudioProcessor>();
+    auto& sung = *sungStorage;
+    initialiseArrangement(sung, mono);
+    takt::Song song;
+    song.rowCount = 3; song.endLoop = false;
+    song.rows[0].pattern = {0}; song.rows[0].repeats = 2;
+    song.rows[1].pattern = {17}; song.rows[1].muteMask = 1;
+    song.rows[2].pattern = {17};
+    check(sung.setSong(0, song) && sung.startSong(0), "Cannot start the first song row");
+    sung.setPlayHead(&host); sung.setParameter("hostSync", 1);
+    sung.prepareToPlay(testRate, testBlock);
+    const auto songAudio = renderWithHost(sung, host, {381, 512, 97}, 72512, 120);
+    check(songAudio.getMagnitude(0, 0, 512) > .01f
+              && songAudio.getMagnitude(0, 24000, 512) > .01f
+              && magnitude(songAudio, 48000, 24000) < 1.0e-6f
+              && songAudio.getMagnitude(1, 72000, 512) > .01f,
+          "Song first row/repeats/row mute/unmute did not affect the rendered sequence");
+    check(sung.getCurrentSongRow() == 2, "Song row position was not published alongside the audio");
+    check(sung.queueSongRow(0), "Cannot queue a jump back to the first song row");
+    const auto jumped = renderWithHost(sung, host, {381, 512, 97}, 24000, 120, 72512);
+    check(jumped.getMagnitude(0, 23488, 512) > .01f && sung.getCurrentSongRow() == 0,
+          "A queued song-row jump did not activate at the current row boundary");
+
+    auto performanceStorage = std::make_unique<TaktAudioProcessor>();
+    auto& performance = *performanceStorage;
+    initialiseArrangement(performance, mono);
+    performance.setPerformKit(true);
+    performance.setParameter("t1_gain", .4f);
+    check(performance.setCurrentPattern(17), "Cannot select a pattern in Perform Kit mode");
+    check(performance.getCurrentPattern() == 17 && performance.parameterValue("t1_pan") == -1
+              && std::abs(performance.parameterValue("t1_gain") - .4f) < 1.0e-6f
+              && std::abs(performance.getPatternSnapshot(0)->trackParameters[0][0] - .8f) < 1.0e-6f,
+          "Perform Kit replaced the active performance sound on a pattern change");
+    performance.prepareToPlay(testRate, testBlock);
+    const auto kept = process(performance, testBlock, note(36));
+    check(kept.getMagnitude(0, 0, testBlock) > .01f && kept.getMagnitude(1, 0, testBlock) == 0,
+          "Perform Kit retained metadata but replaced the sounding kit");
+    performance.saveKit(); performance.setParameter("t1_pan", 1);
+    performance.reloadKit();
+    check(performance.parameterValue("t1_pan") == -1, "Reload Kit did not restore the saved performance sound");
+    check(std::abs(performance.getPatternSnapshot(17)->trackParameters[0][0] - .4f) < 1.0e-6f,
+          "SAVE KIT did not explicitly save the performance sound to the selected pattern");
+    performance.setPerformKit(false);
+    check(performance.setCurrentPattern(0)
+              && std::abs(performance.parameterValue("t1_gain") - .8f) < 1.0e-6f,
+          "An unsaved Perform Kit tweak overwrote the previous pattern's kit");
+    passed("exact host-tempo bank cue audio before UI mirror; chain switches, Song repeats/mutes and Perform Kit/reload audio");
+}
+
 void testClipboard(const juce::File& mono, const juce::File& stereo)
 {
     using Scope = TaktAudioProcessor::EditScope;
     using Result = TaktAudioProcessor::EditResult;
-    TaktAudioProcessor processor;
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
     configureDry(processor);
     for (int track = 0; track < takt::numTracks; ++track)
     {
@@ -656,7 +1338,8 @@ void testClipboard(const juce::File& mono, const juce::File& stereo)
 
     // Check the audible meaning of a copied pitch lock and lock-only CLEAR,
     // rather than checking the data transfer alone.
-    TaktAudioProcessor musical;
+    auto musicalStorage = std::make_unique<TaktAudioProcessor>();
+    auto& musical = *musicalStorage;
     TestPlayHead playHead;
     configureDry(musical);
     for (int track = 0; track < takt::numTracks; ++track) musical.clearTrack(track);
@@ -667,7 +1350,8 @@ void testClipboard(const juce::File& mono, const juce::File& stereo)
     octave.velocity = 0.75f;
     octave.pitch = 12;
     octave.cutoff = 20000;
-    octave.lockPitch = octave.lockCutoff = true;
+    octave.lockPitch = octave.lockCutoff = octave.lockSlice = true;
+    octave.slice = 3;
     musical.setStep(0, 3, octave);
     check(musical.copySelection(Scope::Step, 0, 3) == Result::Applied
               && musical.pasteSelection(Scope::Step, 0, 99) == Result::Applied,
@@ -687,7 +1371,7 @@ void testClipboard(const juce::File& mono, const juce::File& stereo)
           "Pasting a pitch lock modified the base preset");
     check(musical.clearSelection(Scope::Step, 0, 99) == Result::Applied, "Step lock clear failed");
     auto cleared = octave;
-    cleared.lockPitch = cleared.lockCutoff = false;
+    cleared.lockPitch = cleared.lockCutoff = cleared.lockSlice = false;
     cleared.pitch = 0; // CLEAR removes the legacy additive pitch payload too.
     compareSteps(musical.getStep(0, 99), cleared);
     check(magnitude(render(), 3500, 100) > 0.001f,
@@ -742,7 +1426,8 @@ void checkMusicalState(TaktAudioProcessor& processor, const juce::ValueTree& exp
 
 void testTemporaryPattern(const juce::File& mono, const juce::File& stereo)
 {
-    TaktAudioProcessor processor;
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
     configureDry(processor);
     juce::String error;
     for (int track = 0; track < takt::numTracks; ++track)
@@ -803,7 +1488,8 @@ void testTemporaryPattern(const juce::File& mono, const juce::File& stereo)
     processor.temporaryReloadPattern();
     checkMusicalState(processor, saved);
 
-    TaktAudioProcessor fallback;
+    auto fallbackStorage = std::make_unique<TaktAudioProcessor>();
+    auto& fallback = *fallbackStorage;
     const auto initial = readStateTree(stateOf(fallback));
     fallback.clearTrack(0);
     fallback.setParameter("tempo", 222.0f);
@@ -823,7 +1509,8 @@ void testTemporaryPattern(const juce::File& mono, const juce::File& stereo)
     fallback.temporaryReloadPattern();
     checkMusicalState(fallback, baseline);
     fallback.temporarySavePattern();
-    TaktAudioProcessor replacement;
+    auto replacementStorage = std::make_unique<TaktAudioProcessor>();
+    auto& replacement = *replacementStorage;
     configureDry(replacement);
     replacement.setParameter("tempo", 193.0f);
     replacement.setTrackLength(15, 128);
@@ -840,7 +1527,8 @@ void testTemporaryPattern(const juce::File& mono, const juce::File& stereo)
 
 void testHostTransport(const juce::File& mono)
 {
-    TaktAudioProcessor processor;
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
     TestPlayHead host;
     configureDry(processor);
     processor.setParameter("hostSync", 1.0f);
@@ -895,7 +1583,10 @@ void testHostTransport(const juce::File& mono)
     check(magnitude(process(processor, testBlock)) > 0.01f && !processor.isHostPlaying(),
           "Manual transport could not run independently of the host");
 
-    TaktAudioProcessor reference, variable;
+    auto referenceStorage = std::make_unique<TaktAudioProcessor>();
+    auto& reference = *referenceStorage;
+    auto variableStorage = std::make_unique<TaktAudioProcessor>();
+    auto& variable = *variableStorage;
     TestPlayHead referenceHost, variableHost;
     for (auto* candidate : { &reference, &variable })
     {
@@ -969,7 +1660,8 @@ ParameterIdentities parameterIdentities(TaktAudioProcessor& processor)
 
 void testEditorNavigation(const juce::File& stereo)
 {
-    TaktAudioProcessor processor;
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
     juce::String error;
     check(processor.loadSample(8, stereo, error), error.toStdString());
     for (int track = 0; track < takt::numTracks; ++track)
@@ -981,7 +1673,7 @@ void testEditorNavigation(const juce::File& stereo)
     }
     const auto before = stateOf(processor);
     const auto identities = parameterIdentities(processor);
-    check(identities.size() == 265, "UI navigation changed the published automation parameter count");
+    check(identities.size() >= 265, "UI navigation removed a published automation parameter");
     std::set<juce::String> ids;
     for (const auto& parameter : identities) ids.insert(parameter.first);
     for (const char* id : { "play", "hostSync", "tempo", "swing", "master", "delayMix", "feedback", "delayBeats", "reverbMix" })
@@ -991,7 +1683,8 @@ void testEditorNavigation(const juce::File& stereo)
                                  "bitDepth", "start", "end", "delaySend", "reverbSend", "reverse", "mute", "loop" })
             check(ids.erase(TaktAudioProcessor::trackParameterID(track, name)) == 1,
                   "A track automation ID changed");
-    check(ids.empty(), "Contextual encoders introduced unexpected automation IDs");
+    check(ids.count("t1_machine") == 1 && ids.count("t16_lfo3_depth") == 1,
+          "New machine/LFO automation IDs are missing");
 
     std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
     check(editor != nullptr, "Cannot create editor for navigation validation");
@@ -1056,7 +1749,8 @@ void testEditorNavigation(const juce::File& stereo)
 
 void testPanelGestures()
 {
-    TaktAudioProcessor processor;
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
     configureDry(processor);
     for (int track = 0; track < takt::numTracks; ++track) processor.clearTrack(track);
     processor.setTrackLength(8, 128);
@@ -1127,9 +1821,222 @@ void testPanelGestures()
     passed("panel gestures: TRK selection, FUNC copy/paste/clear undo, page clipboard and temporary save/reload");
 }
 
+class HostGestureListener final : public juce::AudioProcessorListener
+{
+public:
+    explicit HostGestureListener(TaktAudioProcessor& value) : processor(value)
+    { processor.addListener(this); }
+    ~HostGestureListener() override { processor.removeListener(this); }
+    void audioProcessorParameterChanged(juce::AudioProcessor*, int, float) override {}
+    void audioProcessorChanged(juce::AudioProcessor*, const ChangeDetails&) override {}
+    void audioProcessorParameterChangeGestureBegin(juce::AudioProcessor*, int index) override
+    {
+        if (!active.insert(index).second) nested = true;
+        ++begins;
+    }
+    void audioProcessorParameterChangeGestureEnd(juce::AudioProcessor*, int index) override
+    {
+        if (active.erase(index) != 1) unbalanced = true;
+        ++ends;
+    }
+    std::set<int> active;
+    bool nested = false, unbalanced = false;
+    int begins = 0, ends = 0;
+private:
+    TaktAudioProcessor& processor;
+};
+
+void testExtendedEditor(const juce::File& stereo)
+{
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
+    configureDry(processor);
+    for (int track = 0; track < takt::numTracks; ++track) processor.clearTrack(track);
+    juce::String error;
+    check(processor.loadSample(4, stereo, error), error.toStdString());
+    std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
+    click(*editor, "track-5");
+    const auto binding = [&](const char* encoder, const char* suffix)
+    {
+        check(component<juce::Slider>(*editor, encoder).getProperties()["parameterID"].toString()
+                  == TaktAudioProcessor::trackParameterID(4, suffix),
+              std::string("Incorrect selected-track editor binding: ") + encoder + " / " + suffix);
+    };
+    for (int machine = 1; machine <= 6; ++machine)
+    {
+        processor.setParameter("t5_machine", static_cast<float>(machine));
+        const auto before = stateOf(processor);
+        click(*editor, "family-src");
+        binding("encoder-B", "playMode"); binding("encoder-H", "sampleLevel");
+        if (machine == 2)
+        { binding("encoder-E", "segmentSize"); binding("encoder-F", "segmentMode"); binding("encoder-G", "bars"); }
+        else if (machine == 5 || machine == 6)
+        {
+            binding("encoder-F", "sliceLength");
+            if (machine == 6) binding("encoder-G", "sliceCount");
+        }
+        else
+        {
+            binding("encoder-E", "start"); binding("encoder-F", "sourceLength");
+            binding("encoder-G", machine == 1 ? "loopPosition" : "bars");
+        }
+        check(component<juce::Slider>(*editor, "encoder-A").isEnabled() == (machine != 4),
+              "Repitch retained a misleading independent pitch control");
+        check(stateOf(processor) == before, "Rebinding source machines changed musical parameters");
+    }
+    click(*editor, "family-mod");
+    for (int lfo = 1; lfo <= 3; ++lfo)
+    {
+        const auto prefix = "lfo" + juce::String(lfo) + "_";
+        check(component<juce::Slider>(*editor, "encoder-A").getProperties()["parameterID"].toString()
+                  == "t5_" + prefix + "speed", "MOD subpage selected the wrong LFO");
+        component<juce::Slider>(*editor, "encoder-H").setValue(lfo * 7, juce::sendNotificationSync);
+        check(processor.parameterValue("t5_" + prefix + "depth") == lfo * 7
+                  && processor.parameterValue("t1_" + prefix + "depth") == 0,
+              "LFO depth editing wrote to a different track or oscillator");
+        if (lfo < 3) click(*editor, "param-page-next");
+    }
+    component<juce::Slider>(*editor, "encoder-D").setValue(4, juce::sendNotificationSync);
+    check(processor.parameterValue("t5_lfo3_destination") == 4, "LFO destination did not preview");
+    click(*editor, "navigation-no");
+    check(processor.parameterValue("t5_lfo3_destination") == 0, "NO did not cancel the previewed destination");
+    component<juce::Slider>(*editor, "encoder-D").setValue(4, juce::sendNotificationSync);
+    click(*editor, "navigation-yes");
+    check(processor.parameterValue("t5_lfo3_destination") == 4, "YES did not confirm the LFO destination");
+
+    processor.setParameter("t5_ampMode", 2);
+    click(*editor, "family-amp");
+    binding("encoder-C", "ampSustain"); binding("encoder-D", "ampRelease");
+    binding("encoder-F", "ampMode"); binding("encoder-H", "ampVolume");
+    component<juce::Slider>(*editor, "encoder-H").setValue(.37, juce::sendNotificationSync);
+    check(std::abs(processor.parameterValue("t5_ampVolume") - .37f) < 1.0e-6f,
+          "AMP volume control changed LEVEL instead of AMP VOL");
+    processor.setParameter("t5_filterMachine", 3);
+    click(*editor, "family-fltr");
+    binding("encoder-F", "eqGain"); binding("encoder-G", "eqQ");
+    component<juce::Slider>(*editor, "encoder-F").setValue(-9, juce::sendNotificationSync);
+    check(processor.parameterValue("t5_eqGain") == -9, "EQ gain editor is disconnected");
+    click(*editor, "param-page-next");
+    binding("encoder-E", "filterBase"); binding("encoder-F", "filterWidth");
+    click(*editor, "family-fx");
+    binding("encoder-A", "bitReduction"); binding("encoder-C", "srr");
+    binding("encoder-G", "chorusSend"); binding("encoder-H", "drivePre");
+    component<juce::Slider>(*editor, "encoder-A").setValue(3, juce::sendNotificationSync);
+    check(processor.parameterValue("t5_bitReduction") == 3 && processor.parameterValue("t5_bitDepth") == 16,
+          "New BR editing altered the preserved legacy bit-depth automation parameter");
+
+    click(*editor, "family-trig");
+    click(*editor, "trig-1");
+    check(processor.getStep(4, 0).enabled && processor.getStep(4, 0).advanced,
+          "A newly recorded grid trig used legacy sequencing rules");
+    check(component<juce::Slider>(*editor, "encoder-F").getValue() == 1,
+          "FLT.T did not display its true default");
+    component<juce::Slider>(*editor, "encoder-C").setValue(.75, juce::sendNotificationSync);
+    component<juce::Slider>(*editor, "encoder-F").setValue(0, juce::sendNotificationSync);
+    component<juce::Slider>(*editor, "encoder-G").setValue(1, juce::sendNotificationSync);
+    component<juce::Slider>(*editor, "encoder-H").setValue(6, juce::sendNotificationSync);
+    const auto rule = processor.getStep(4, 0);
+    check(rule.noteLengthBeats == .75f && !rule.filterTrig
+              && rule.rule.fill == takt::sequencer::Fill::On
+              && rule.rule.condition == takt::sequencer::Condition::First,
+          "TRIG length/filter-trigger/FILL/condition fields did not reach the selected step");
+    click(*editor, "param-page-next");
+    component<juce::Slider>(*editor, "encoder-A").setValue(1, juce::sendNotificationSync);
+    component<juce::Slider>(*editor, "encoder-B").setValue(-7, juce::sendNotificationSync);
+    component<juce::Slider>(*editor, "encoder-D").setValue(11, juce::sendNotificationSync);
+    check(processor.getStep(4, 0).retrig.enabled && processor.getStep(4, 0).retrig.velocityFade == -7
+              && processor.getStep(4, 0).retrig.rateIndex == 11,
+          "TRIG retrigger controls did not edit the documented rate/fade fields");
+    auto locked = processor.getStep(4, 0);
+    locked.lockPitch = locked.lockCutoff = locked.lockSlice = true;
+    locked.pitch = 9; locked.slice = 3;
+    processor.setStep(4, 0, locked);
+    click(*editor, "trig-1");
+    compareSteps(processor.getStep(4, 0), takt::Step{});
+    click(*editor, "trig-1");
+    check(processor.getStep(4, 0).enabled && !processor.getStep(4, 0).lockSlice,
+          "Removing and recreating a grid trig retained old slice/pitch/filter locks");
+    click(*editor, "func-modifier"); click(*editor, "trig-2");
+    check(processor.getStep(4, 1).lockTrig && !processor.getStep(4, 1).enabled,
+          "FUNC+pad did not create a lock-only trig");
+
+    click(*editor, "family-src");
+    processor.setParameter("t5_machine", 1); click(*editor, "family-src");
+    HostGestureListener gestures(processor);
+    auto& tune = component<juce::Slider>(*editor, "encoder-A");
+    if (tune.onDragStart) tune.onDragStart();
+    tune.setValue(3, juce::sendNotificationSync);
+    if (tune.onDragEnd) tune.onDragEnd();
+    click(*editor, "track-select-modifier");
+    tune.setValue(6, juce::sendNotificationSync);
+    click(*editor, "navigation-no");
+    check(!gestures.nested && !gestures.unbalanced && gestures.active.empty()
+              && gestures.begins > 0 && gestures.begins == gestures.ends,
+          "Editor and Control All emitted nested or unbalanced host automation gestures");
+    passed("six source-machine bindings, three LFOs/destination confirmation, AMP/EQ/FX and advanced TRIG/grid gestures");
+}
+
+void testArrangementEditor(const juce::File& mono)
+{
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
+    initialiseArrangement(processor, mono);
+    processor.prepareToPlay(testRate, testBlock);
+    std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
+    const auto before = stateOf(processor);
+    click(*editor, "unavailable-ptn");
+    click(*editor, "pattern-bank-H");
+    click(*editor, "pattern-bank-A");
+    click(*editor, "arrangement-back");
+    click(*editor, "unavailable-song");
+    component<juce::ComboBox>(*editor, "song-select").setSelectedId(16, juce::sendNotificationSync);
+    click(*editor, "arrangement-back");
+    check(stateOf(processor) == before, "Viewing a bank or empty song changed the musical project");
+    click(*editor, "unavailable-ptn");
+    click(*editor, "pattern-bank-B"); click(*editor, "trig-2");
+    check(processor.getCurrentPattern() == 17 && processor.parameterValue("t1_pan") == 1,
+          "PTN bank B + pad 2 did not select its existing kit");
+    auto& chain = component<juce::TextEditor>(*editor, "arrangement-chain");
+    chain.setText("A01 B02 H16", false);
+    click(*editor, "arrangement-chain-play");
+    check(processor.getChain() == std::vector<int>({0, 17, 127}), "Chain text did not resolve actual bank addresses");
+    const auto chainStart = process(processor, testBlock);
+    processor.servicePendingTransitions();
+    check(processor.parameterValue("play") == 1 && chainStart.getMagnitude(0, 0, testBlock) > .01f,
+          "PLAY CHAIN did not start the sounding first pattern with the internal clock");
+    click(*editor, "arrangement-back");
+    click(*editor, "unavailable-song");
+    component<juce::ComboBox>(*editor, "song-select").setSelectedId(16, juce::sendNotificationSync);
+    click(*editor, "song-add-row");
+    component<juce::Slider>(*editor, "encoder-A").setValue(17, juce::sendNotificationSync);
+    component<juce::Slider>(*editor, "encoder-B").setValue(3, juce::sendNotificationSync);
+    component<juce::Slider>(*editor, "encoder-D").setValue(155, juce::sendNotificationSync);
+    check(processor.getSong(15).rowCount == 1 && processor.getSong(15).rows[0].pattern.index == 17
+              && processor.getSong(15).rows[0].repeats == 3 && processor.getSong(15).rows[0].tempo == 155,
+          "Song row UI did not store its pattern/repeat/tempo fields");
+    click(*editor, "song-add-row");
+    check(processor.getSong(15).rowCount == 2, "ADD ROW did not insert a second row");
+    click(*editor, "song-delete-row");
+    check(processor.getSong(15).rowCount == 1, "DELETE ROW did not remove the selected row");
+    click(*editor, "song-play");
+    check(processor.getQueuedPattern() == 17 && processor.getCurrentSong() == -1,
+          "PLAY SONG did not cue the edited song while the chain was playing");
+    // The first chain pattern lasts 32000 frames at its stored 90 BPM. An
+    // actual audio callback, rather than an editor timer, applies the queued
+    // song at that boundary and publishes its active row and pattern.
+    const auto activation = renderSequence(processor, 32000);
+    processor.servicePendingTransitions();
+    check(processor.getCurrentSong() == 15 && processor.getCurrentSongRow() == 0
+              && processor.getCurrentPattern() == 17, "PLAY SONG did not activate the edited sixteenth song");
+    check(activation.getMagnitude(1, 31488, 512) > .01f,
+          "The edited song's first row became active without rendering its right-panned kit");
+    passed("PTN/SONG view navigation is silent; bank pads, parsed chain and Song insert/edit/delete/start gestures work");
+}
+
 void testEditorKeyboard()
 {
-    TaktAudioProcessor processor;
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
     configureDry(processor);
     processor.clearTrack(0);
     const auto copied = musicalStep(9);
@@ -1167,7 +2074,8 @@ void testEditorKeyboard()
 
 void testGui(const juce::File& png)
 {
-    TaktAudioProcessor processor;
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
     processor.prepareToPlay(testRate, testBlock);
     std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
     check(editor != nullptr && editor->getWidth() > 600 && editor->getHeight() > 300,
@@ -1359,7 +2267,7 @@ void testLegacyVst3(const juce::File& bundle)
     last.setProperty("conditionOffset", 1, nullptr);
     last.setProperty("retrigs", 4, nullptr);
     last.setProperty("microtiming", 0.125, nullptr);
-    const auto component = writeStateTree(tree);
+    const auto component = writeStateTree(tree, "TAKTII_STATE_1");
     auto xml = juce::AudioProcessor::getXmlFromBinary(hosted.getData(), static_cast<int>(hosted.getSize()));
     auto* stateElement = xml->getChildByName("IComponent");
     stateElement->deleteAllChildElements();
@@ -1382,7 +2290,8 @@ void testLegacyVst3(const juce::File& bundle)
     const auto fixture = bundle.getParentDirectory().getChildFile("legacy-produced.state");
     check(fixture.replaceWithData(produced.getData(), produced.getSize()), "Cannot save genuine legacy state fixture");
 
-    TaktAudioProcessor current;
+    auto currentStorage = std::make_unique<TaktAudioProcessor>();
+    auto& current = *currentStorage;
     current.setStateInformation(produced.getData(), static_cast<int>(produced.getSize()));
     checkLegacySamplesAndPattern(current, producedTree);
     current.prepareToPlay(testRate, testBlock);
@@ -1393,19 +2302,41 @@ void testLegacyVst3(const juce::File& bundle)
     check(magnitude(expected) > 0.001f, "Preserved legacy module rendered no audio for comparison");
     checkEqualAudio(process(current, testBlock, midi), expected, 1.0e-5f,
                     "Genuine legacy state MIDI rendering");
-    TaktAudioProcessor recalled;
+    auto recalledStorage = std::make_unique<TaktAudioProcessor>();
+    auto& recalled = *recalledStorage;
     const auto migrated = stateOf(current);
     recalled.setStateInformation(migrated.getData(), static_cast<int>(migrated.getSize()));
     checkLegacySamplesAndPattern(recalled, producedTree);
+    TestPlayHead host;
+    setHostedParameter(*legacy, "Follow host", 1);
+    current.setParameter("hostSync", 1); recalled.setParameter("hostSync", 1);
+    legacy->setPlayHead(&host); current.setPlayHead(&host); recalled.setPlayHead(&host);
+    // The JUCE VST3 host skips prepareToPlay when rate/block size are unchanged
+    // and the module is still active. Deactivate first so its previous MIDI
+    // voices reset, matching both freshly prepared direct processors below.
+    legacy->releaseResources();
+    prepareHosted(*legacy);
+    current.prepareToPlay(testRate, testBlock); recalled.prepareToPlay(testRate, testBlock);
+    for (const double ppq : {1.75, 2.0})
+    {
+        host.set(ppq, 120, true);
+        const auto legacySeek = process(*legacy, testBlock);
+        checkEqualAudio(process(current, testBlock), legacySeek, 1.0e-5f,
+                        "Genuine legacy module absolute host seek after STATE_1 recall");
+        checkEqualAudio(process(recalled, testBlock), legacySeek, 1.0e-5f,
+                        "Genuine legacy module absolute host seek after STATE_2 migration/re-save/reopen");
+    }
+    legacy->setPlayHead(nullptr);
     legacy->releaseResources();
     legacy.reset();
-    passed("genuine legacy module-produced state preserves 16 source samples, 128 steps, locks, IDs and rendered audio");
+    passed("genuine legacy module-produced state preserves 16 samples, 128 steps, locks, IDs, MIDI audio and migrated absolute host seeks");
     std::cout << "LEGACY STATE: " << fixture.getFullPathName() << std::endl;
 }
 
 void renderDemo(const juce::File& wav)
 {
-    TaktAudioProcessor processor;
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
     processor.setParameter("hostSync", 0.0f);
     processor.setParameter("tempo", 120.0f);
     processor.setParameter("play", 1.0f);
@@ -1466,6 +2397,13 @@ int main(int argc, char** argv)
         testSampleImportAndResampling(mono, stereo, temporary.directory);
         testParameters(mono);
         testState(mono, stereo);
+        testMachinesAndModulationState();
+        testControlAll();
+        testExtendedAudio(temporary.directory);
+        testPatternProject(mono);
+        testPerformKitRecallLifetime(mono);
+        testLegacyHostOriginMigration(mono);
+        testArrangementAudio(mono);
         testClipboard(mono, stereo);
         testTemporaryPattern(mono, stereo);
         testHostTransport(mono);
@@ -1473,6 +2411,8 @@ int main(int argc, char** argv)
         {
             testEditorNavigation(stereo);
             testPanelGestures();
+            testExtendedEditor(stereo);
+            testArrangementEditor(mono);
             testEditorKeyboard();
             testGui(screenshot);
         }

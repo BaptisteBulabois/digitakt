@@ -191,3 +191,23 @@ La présentation des paramètres ne modifie pas leurs plages ou leur DSP legacy.
 Le STOP local conserve sa fonction de pause, avec les queues audio ; il n'offre
 pas encore la coupure/double STOP du matériel. Le
 [guide 0.2](WORKFLOW_0_2.md) décrit les gestes disponibles et les adaptations.
+
+## État de la branche 0.3.0
+
+Le [guide 0.3](WORKFLOW_0_3.md) décrit les machines SRC, trois LFO par piste,
+AMP/FLTR/FX, conditions avancées et retriggers, Control All, banques, chaînes
+et Song Mode ajoutés sur `development/0.3-machines-modulation`.
+La version stable 0.2.0 reste sur `main`.
+
+Les règles historiques restent disponibles pour les anciens états ; les
+extensions ont leurs propres paramètres et le format `TAKTII_STATE_2`.
+Les unités des contrôles, le DSP et certains gestes de sélection/performance
+sont des adaptations logicielles consignées dans le guide. La validation
+effective est consignée séparément dans [VALIDATION.md](VALIDATION.md).
+
+Les modes LIVE/STEP, les locks généralisés et sample locks, le browser et la
+gestion complète des presets/kits, la modulation entre LFO, le compresseur,
+les contrôles SEND FX restants et les opérations de presse-papiers des
+arrangements restent à développer. La mémoire TEMP est limitée au pattern
+actif. Ces limites empêchent de considérer cette branche comme une
+reproduction complète du workflow OS 1.17.

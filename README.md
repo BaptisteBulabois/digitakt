@@ -8,15 +8,16 @@ La priorité est maintenant la **fidélité de l'interface et du workflow musica
 
 Le manuel officiel **OS 1.17** et les notes des versions ont été analysés avec
 des agents. La [spécification de workflow](docs/WORKFLOW_SPEC.md) décrit les
-références et les étapes d'implémentation. La version **0.2.0** commence cette
-évolution : six familles de pages, huit commandes A–H, édition contextuelle,
-copie/collage avec annulation et sauvegarde temporaire du pattern.
+références et les étapes d'implémentation. Cette branche fournit **0.3.0 en développement** :
+machines SRC, trois LFO par piste, enveloppes et filtres, conditions avancées,
+banques, chaînes et Song Mode. **La version stable 0.2.0 reste sur `main`.**
 
-![Interface de Takt II 0.2.0](docs/images/takt-ii-0.2.png)
+![Interface de Takt II 0.3.0](docs/images/takt-ii-0.3.png)
 
-Le [guide du workflow 0.2](docs/WORKFLOW_0_2.md) explique les gestes et les
-adaptations du VST. Les machines et paramètres encore absents restent identifiés
-dans l'interface ; cette version ne représente pas une reproduction complète.
+Le [guide du workflow 0.3](docs/WORKFLOW_0_3.md) explique les gestes,
+la compatibilité et les adaptations de cette branche. Le
+[guide 0.2](docs/WORKFLOW_0_2.md) reste disponible pour l'installation stable.
+Les contrôles encore absents restent désactivés ; le travail restant est explicite.
 
 ## Jouer dans Live
 
@@ -34,22 +35,25 @@ Avec **HOST SYNC** désactivé, **PLAY** permet la lecture et la pause au tempo 
 | --- | --- |
 | Audio | 16 pistes stéréo, une voix de sample par piste, mixage de sortie stéréo |
 | Samples | WAV, AIFF, FLAC ; mono dupliqué en stéréo ; rééchantillonnage linéaire ; 60 s maximum par sample |
-| Lecture | Accordage, début/fin, inversion, boucle, volume, panoramique, mute |
-| Traitement | Enveloppe d'amplitude attack/decay, filtre passe-bas résonant, saturation, réduction de résolution |
-| Séquenceur | 1 à 128 pas par piste, huit pages de 16 pas, swing, microtiming, retriggers |
-| Pas | Vélocité, probabilité déterministe, condition tous les N cycles, locks de hauteur et de fréquence du filtre |
-| Effets | Delay ping-pong synchronisé au tempo et réverbération algorithmique, envois par piste |
+| Lecture | Legacy, Oneshot, Werp, Stretch, Repitch, Grid et Slice ; points de boucle et tranches éditables |
+| Modulation | Trois LFO par piste, sept formes, cinq modes de déclenchement, destinations implémentées |
+| Traitement | Enveloppes AHD/ADSR, filtres multimode/LP4/EQ/Comb/Legacy, base-width, saturation et réduction de résolution/fréquence |
+| Séquenceur | 1 à 128 pas par piste, huit pages de 16 pas, sept vitesses, swing, microtiming, retrigs RATE/LEN/VFAD |
+| Pas | Note et lock trigs, PROB, A:B/PRE/NEI/1ST/LST et inverses, FILL ; locks de pitch/cutoff/slice |
+| Effets | Delay ping-pong, réverbération et chorus indépendants, envois et routages |
+| Arrangement | 128 patterns, chaînes de 64 entrées, 16 songs de 99 lignes ; mutes et Perform Kit |
 | DAW | VST3 instrument, MIDI, tempo/PPQ/transport du host, paramètres automatisables, rappel de l'état |
 | Interface | Six familles TRIG/SRC/FLTR/AMP/FX/MOD, huit commandes A–H, sous-pages, niveau piste distinct, modes jeu/édition GRID |
-| Édition | Presse-papiers partagé pas/page/piste, annulation du collage/effacement par répétition, sauvegarde et rappel temporaires |
+| Édition | Presse-papiers pas/page/piste, annulation du collage/effacement, sauvegarde temporaire et Control All annulable |
 | Démonstration | 16 samples synthétisés et un pattern original prêt à jouer |
 
 En mode GRID, un clic sur un pas active/désactive son trig et le sélectionne.
 Un clic droit sélectionne un pas sans le basculer. La longueur se règle par
 piste. COPY/PASTE/CLEAR appliquent la portée choisie : locks du pas, page ou
 séquence de piste. Répéter PASTE ou CLEAR annule l'opération correspondante.
-TEMP SAVE crée un point de restauration musical ; TEMP RELOAD y revient
-sans changer la source d'horloge ou le transport.
+TEMP SAVE crée un point de restauration musical pour le pattern actif ; TEMP
+RELOAD y revient sans changer la source d'horloge ou le transport. Cette mémoire
+est réinitialisée lors d'un changement de pattern.
 
 Les fonctions non implémentées sont décrites dans [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md). L'utilisateur a confirmé l'installation du VST3 dans Ableton Live ; les comportements musicaux doivent encore être vérifiés dans Live.
 
@@ -86,7 +90,7 @@ cmake --build build-engine --parallel 3
 ctest --test-dir build-engine --output-on-failure
 ```
 
-Les commandes et résultats de validation de cette livraison seront consignés dans [docs/VALIDATION.md](docs/VALIDATION.md).
+Les commandes et résultats de validation sont consignés dans [docs/VALIDATION.md](docs/VALIDATION.md).
 
 ## Licence
 
