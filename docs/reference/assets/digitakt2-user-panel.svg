@@ -1,0 +1,447 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" viewBox="0 0 900 900" version="1.1">
+<title>Digitakt II inspired control surface - grouped SVG for Codex</title>
+<desc>Structured vector reconstruction with semantic groups, IDs, and approximate control bounding boxes to help Codex identify regions.</desc>
+<defs>
+<linearGradient id="panelGrad" x1="0" y1="0" x2="1" y2="1">
+  <stop offset="0%" stop-color="#3b3b3b"/>
+  <stop offset="55%" stop-color="#232323"/>
+  <stop offset="100%" stop-color="#484848"/>
+</linearGradient>
+<linearGradient id="screenGrad" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0%" stop-color="#252533"/>
+  <stop offset="100%" stop-color="#0c0c13"/>
+</linearGradient>
+<linearGradient id="btnGrad" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0%" stop-color="#27292d"/>
+  <stop offset="100%" stop-color="#1b1d21"/>
+</linearGradient>
+<filter id="softShadow" x="-40%" y="-40%" width="180%" height="200%">
+  <feDropShadow dx="6" dy="8" stdDeviation="7" flood-color="#000000" flood-opacity="0.35"/>
+</filter>
+<filter id="knobShadow" x="-50%" y="-50%" width="210%" height="220%">
+  <feDropShadow dx="9" dy="10" stdDeviation="6" flood-color="#000000" flood-opacity="0.42"/>
+</filter>
+<style><![CDATA[
+  .page { fill:#efefef; }
+  .panel { fill:url(#panelGrad); stroke:#181818; stroke-width:1.4; }
+  .panelEdge { fill:#2c2c2c; }
+  .screw { fill:#0d0d0d; stroke:#5a5a5a; stroke-width:0.9; }
+  .toplabel { fill:#f2f2f2; font-family:Arial, Helvetica, sans-serif; font-size:13px; }
+  .leftlabel { fill:#f2f2f2; font-family:Arial, Helvetica, sans-serif; font-size:15px; }
+  .yellowSmall { fill:#e5b016; font-family:Arial, Helvetica, sans-serif; font-size:13px; }
+  .tinyWhite { fill:#ececec; font-family:Arial, Helvetica, sans-serif; font-size:12px; }
+  .bezel { fill:#000000; }
+  .screen { fill:url(#screenGrad); stroke:#6a6a7d; stroke-width:1.2; }
+  .screenText { fill:#f5f5f6; font-family:"Courier New", monospace; }
+  .knob { fill:#42454b; stroke:#17181b; stroke-width:2.2; }
+  .btn { fill:url(#btnGrad); stroke:#0c0d0f; stroke-width:2.1; }
+  .btnTxt { fill:#efefef; font-family:Arial, Helvetica, sans-serif; font-size:17px; text-anchor:middle; dominant-baseline:middle; }
+  .subTxt { fill:#e5b016; font-family:Arial, Helvetica, sans-serif; font-size:13px; text-anchor:middle; }
+  .pad { fill:#1a1c20; stroke:#0b0b0d; stroke-width:2.1; }
+  .padInset { fill:#202327; stroke:#0d0e10; stroke-width:1.4; }
+  .numRed { fill:#ff5865; font-family:Arial, Helvetica, sans-serif; font-weight:700; font-size:24px; text-anchor:middle; dominant-baseline:middle; }
+  .numYel { fill:#eceb78; font-family:Arial, Helvetica, sans-serif; font-weight:700; font-size:24px; text-anchor:middle; dominant-baseline:middle; }
+  .numWht { fill:#e8e8e8; font-family:Arial, Helvetica, sans-serif; font-weight:700; font-size:24px; text-anchor:middle; dominant-baseline:middle; }
+  .codexHint { fill:none; stroke:#4fc3ff; stroke-opacity:0.0; stroke-width:1; }
+]]></style>
+</defs>
+<rect x="0" y="0" width="900" height="900" class="page"/>
+<g id="panel_background" data-label="Main panel shell and page">
+<rect x="36" y="42" width="848" height="703" rx="4" class="panel" id="panel_shell"/>
+<polygon id="panel_tab" points="803,42 809,36 813,44" class="panelEdge"/>
+</g>
+<g id="mount_screws" data-label="Mount screws">
+<g id="screw_tl" data-label="screw_tl">
+<circle cx="77" cy="72" r="10.5" class="screw"/>
+<circle cx="77" cy="72" r="2.8" fill="#a6a6a6"/>
+</g>
+<g id="screw_top_mid" data-label="screw_top_mid">
+<circle cx="430" cy="72" r="10.5" class="screw"/>
+<circle cx="430" cy="72" r="2.8" fill="#a6a6a6"/>
+</g>
+<g id="screw_tr" data-label="screw_tr">
+<circle cx="846" cy="72" r="10.5" class="screw"/>
+<circle cx="846" cy="72" r="2.8" fill="#a6a6a6"/>
+</g>
+<g id="screw_bl" data-label="screw_bl">
+<circle cx="77" cy="726" r="10.5" class="screw"/>
+<circle cx="77" cy="726" r="2.8" fill="#a6a6a6"/>
+</g>
+<g id="screw_bottom_mid" data-label="screw_bottom_mid">
+<circle cx="430" cy="726" r="10.5" class="screw"/>
+<circle cx="430" cy="726" r="2.8" fill="#a6a6a6"/>
+</g>
+<g id="screw_br" data-label="screw_br">
+<circle cx="846" cy="726" r="10.5" class="screw"/>
+<circle cx="846" cy="726" r="2.8" fill="#a6a6a6"/>
+</g>
+</g>
+<g id="top_connector_labels" data-label="Connector labels">
+<g id="headphone_icon" data-label="Headphone icon"><path d="M90 62 a7 7 0 0 1 14 0" fill="none" stroke="#f2f2f2" stroke-width="2.8"/><line x1="97" y1="61" x2="97" y2="71" stroke="#f2f2f2" stroke-width="2.8"/></g>
+<text x="138" y="68" id="label_out" class="toplabel">L --- Out --- R</text>
+<text x="255" y="68" id="label_in" class="toplabel">L --- In --- R</text>
+<text x="368" y="68" id="label_midi_in" class="toplabel">MIDI In</text>
+<text x="453" y="68" id="label_midi_out" class="toplabel">MIDI Out</text>
+<text x="556" y="68" id="label_midi_thru" class="toplabel">MIDI Thru</text>
+<text x="669" y="68" id="label_usb" class="toplabel">USB</text>
+<text x="742" y="68" id="label_dc" class="toplabel">DC In</text>
+<text x="804" y="68" id="label_power" class="toplabel">Power</text>
+</g>
+<g id="brand_logo" data-label="Brand logo" transform="translate(787,78)">
+<path id="logo_outline" d="M0 0 h56 l-8 34 h-56 z" fill="none" stroke="#f7f7f7" stroke-width="4"/>
+<path id="logo_mark" d="M18 10 h31 l-18 12 h22" fill="none" stroke="#f7f7f7" stroke-width="5.5"/>
+</g>
+<g id="left_controls" data-label="Left controls">
+<g id="main_volume_knob" data-label="main_volume_knob">
+<circle cx="93" cy="176" r="28" class="knob" filter="url(#knobShadow)"/>
+<circle cx="111" cy="182" r="3.8" fill="#f4f4f4"/>
+<text x="72" y="223" class="leftlabel">Main Volume</text>
+</g>
+<g id="level_data_knob" data-label="level_data_knob">
+<circle cx="103" cy="275" r="28" class="knob" filter="url(#knobShadow)"/>
+<text x="54" y="323" class="leftlabel">Level/Data</text>
+<text x="53" y="344" class="leftlabel">Preset Pool</text>
+</g>
+<g id="func_button" data-label="func_button">
+<rect x="81" y="387" width="71" height="41" rx="11" ry="11" fill="#ebb41a" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="116.5" y="408.5" fill="#303030" style="font-family:Arial, Helvetica, sans-serif;font-size:16px;text-anchor:middle;dominant-baseline:middle;">FUNC</text>
+</g>
+<g id="left_special_buttons" data-label="Left utility buttons">
+<g id="kb_setup_button" data-label="kb_setup_button">
+<rect x="81" y="447" width="55" height="49" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="108.5" y="512" class="subTxt">KB Setup</text>
+</g>
+<g id="kb_icon" data-label="keyboard icon"><rect x="95" y="456" width="29" height="18" rx="3" fill="none" stroke="#efefef" stroke-width="2"/><line x1="103" y1="456" x2="103" y2="474" stroke="#0f0f10" stroke-width="1.4"/><line x1="111" y1="456" x2="111" y2="474" stroke="#0f0f10" stroke-width="1.4"/><line x1="119" y1="456" x2="119" y2="474" stroke="#0f0f10" stroke-width="1.4"/></g>
+<g id="trk_button" data-label="trk_button">
+<rect x="81" y="519" width="55" height="41" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="108.5" y="540.5" fill="#efefef" style="font-family:Arial, Helvetica, sans-serif;font-size:17px;text-anchor:middle;dominant-baseline:middle;">TRK</text>
+<text x="108.5" y="576" class="subTxt">Mute Mode</text>
+</g>
+<g id="ptn_button" data-label="ptn_button">
+<rect x="81" y="590" width="55" height="41" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="108.5" y="611.5" fill="#efefef" style="font-family:Arial, Helvetica, sans-serif;font-size:17px;text-anchor:middle;dominant-baseline:middle;">PTN</text>
+<text x="108.5" y="647" class="subTxt">Bank</text>
+</g>
+<g id="song_button" data-label="song_button">
+<rect x="81" y="661" width="55" height="41" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="108.5" y="682.5" fill="#efefef" style="font-family:Arial, Helvetica, sans-serif;font-size:17px;text-anchor:middle;dominant-baseline:middle;">SONG</text>
+<text x="108.5" y="718" class="subTxt">Song Edit</text>
+</g>
+</g>
+</g>
+<g id="display_section" data-label="Display section">
+<rect x="158" y="138" width="294" height="204" class="bezel" id="display_bezel"/>
+<rect x="194" y="161" width="228" height="120" rx="2" class="screen" id="display_screen"/>
+<g id="screen_contents" data-label="Screen contents">
+<text x="198" y="190" class="screenText" style="font-size:18px;font-weight:700;">A01</text>
+<text x="231" y="190" class="screenText" style="font-size:22px;font-weight:700;">HISPDISK</text>
+<text x="366" y="190" class="screenText" style="font-size:16px;font-weight:700;">147.0</text>
+<rect x="197" y="202" width="23" height="23" rx="1" fill="none" stroke="#f0f0f2" stroke-width="2" id="screen_box_1"/>
+<rect x="229" y="202" width="47" height="18" rx="1" fill="none" stroke="#f0f0f2" stroke-width="2" id="screen_box_2"/>
+<rect x="286" y="202" width="36" height="18" rx="1" fill="none" stroke="#f0f0f2" stroke-width="2" id="screen_box_3"/>
+<rect x="331" y="202" width="52" height="18" rx="1" fill="none" stroke="#f0f0f2" stroke-width="2" id="screen_box_4"/>
+<rect x="390" y="202" width="22" height="20" rx="1" fill="none" stroke="#f0f0f2" stroke-width="2" id="screen_box_5"/>
+<rect x="196" y="226" width="24" height="34" rx="1" fill="none" stroke="#f0f0f2" stroke-width="2" id="screen_value_top_box"/>
+<text x="208.0" y="249.0" class="screenText" style="font-size:17px;text-anchor:middle;" id="screen_value_top">13</text>
+<rect x="196" y="266" width="24" height="34" rx="1" fill="none" stroke="#f0f0f2" stroke-width="2" id="screen_value_bottom_box"/>
+<text x="208.0" y="289.0" class="screenText" style="font-size:18px;text-anchor:middle;" id="screen_value_bottom">0</text>
+<line x1="239" y1="228" x2="390" y2="228" stroke="#ededed" stroke-width="1" opacity="0.75"/>
+<line x1="239" y1="243" x2="390" y2="243" stroke="#ededed" stroke-width="1" opacity="0.75"/>
+<line x1="239" y1="258" x2="390" y2="258" stroke="#ededed" stroke-width="1" opacity="0.75"/>
+<line x1="239" y1="225" x2="239" y2="262" stroke="#ededed" stroke-width="1" opacity="0.65"/>
+<line x1="271" y1="225" x2="271" y2="262" stroke="#ededed" stroke-width="1" opacity="0.65"/>
+<line x1="302" y1="225" x2="302" y2="262" stroke="#ededed" stroke-width="1" opacity="0.65" stroke-dasharray="3,4"/>
+<line x1="333" y1="225" x2="333" y2="262" stroke="#ededed" stroke-width="1" opacity="0.65"/>
+<line x1="364" y1="225" x2="364" y2="262" stroke="#ededed" stroke-width="1" opacity="0.65"/>
+<line x1="390" y1="225" x2="390" y2="262" stroke="#ededed" stroke-width="1" opacity="0.65"/>
+<polyline id="screen_wave_main" points="241,242 245,230 249,250 253,234 257,248 261,237 266,248 271,236 276,244 281,240 286,242 291,239 297,237 302,235 307,233 313,237 319,244 325,241 331,238 337,245 344,244 350,238 357,241 363,246 369,240 375,243" fill="none" stroke="#f4f4f5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline id="screen_wave_secondary" points="241,250 247,246 253,248 259,247 265,248 271,249 277,251 283,250 289,251 295,250 301,249 307,249 313,248 319,248 325,249 331,248 337,249 343,250 349,249 355,250 361,249 367,250 373,249" fill="none" stroke="#f4f4f5" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="198" y="316" class="screenText" style="font-size:13px;" id="screen_label_lev">LEV</text>
+<text x="241" y="316" class="screenText" style="font-size:13px;" id="screen_label_strt">STRT</text>
+<text x="289" y="316" class="screenText" style="font-size:13px;" id="screen_label_len">LEN</text>
+<text x="338" y="316" class="screenText" style="font-size:13px;" id="screen_label_loop">LOOP</text>
+</g>
+<g id="display_branding" data-label="Branding below display">
+<text x="184" y="326" fill="#f6f6f6" style="font-family:Arial, Helvetica, sans-serif;font-size:27px;font-weight:700;">Digitakt</text>
+<text x="296" y="326" fill="#dedede" style="font-family:Arial, Helvetica, sans-serif;font-size:27px;font-weight:700;">II</text>
+</g>
+</g>
+<g id="encoder_matrix" data-label="Eight encoders A-H">
+<g id="encoder_a" data-label="Encoder A">
+<circle cx="497" cy="176" r="29" class="knob" filter="url(#knobShadow)"/>
+<text x="492" y="223" class="leftlabel">A</text>
+</g>
+<g id="encoder_b" data-label="Encoder B">
+<circle cx="608" cy="176" r="29" class="knob" filter="url(#knobShadow)"/>
+<text x="603" y="223" class="leftlabel">B</text>
+</g>
+<g id="encoder_c" data-label="Encoder C">
+<circle cx="719" cy="176" r="29" class="knob" filter="url(#knobShadow)"/>
+<text x="714" y="223" class="leftlabel">C</text>
+</g>
+<g id="encoder_d" data-label="Encoder D">
+<circle cx="830" cy="176" r="29" class="knob" filter="url(#knobShadow)"/>
+<text x="825" y="223" class="leftlabel">D</text>
+</g>
+<g id="encoder_e" data-label="Encoder E">
+<circle cx="497" cy="274" r="29" class="knob" filter="url(#knobShadow)"/>
+<text x="492" y="321" class="leftlabel">E</text>
+</g>
+<g id="encoder_f" data-label="Encoder F">
+<circle cx="608" cy="274" r="29" class="knob" filter="url(#knobShadow)"/>
+<text x="603" y="321" class="leftlabel">F</text>
+</g>
+<g id="encoder_g" data-label="Encoder G">
+<circle cx="719" cy="274" r="29" class="knob" filter="url(#knobShadow)"/>
+<text x="714" y="321" class="leftlabel">G</text>
+</g>
+<g id="encoder_h" data-label="Encoder H">
+<circle cx="830" cy="274" r="29" class="knob" filter="url(#knobShadow)"/>
+<text x="825" y="321" class="leftlabel">H</text>
+</g>
+</g>
+<g id="top_mode_buttons" data-label="Top mode buttons">
+<g id="button_trig" data-label="button_trig">
+<rect x="484" y="343" width="53" height="42" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="510.5" y="365.0" fill="#efefef" style="font-family:Arial, Helvetica, sans-serif;font-size:17px;text-anchor:middle;dominant-baseline:middle;">TRIG</text>
+<text x="510.5" y="401" class="subTxt">Quantize</text>
+</g>
+<g id="button_src" data-label="button_src">
+<rect x="547" y="343" width="53" height="42" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="573.5" y="365.0" fill="#efefef" style="font-family:Arial, Helvetica, sans-serif;font-size:17px;text-anchor:middle;dominant-baseline:middle;">SRC</text>
+<text x="573.5" y="401" class="subTxt">Machine</text>
+</g>
+<g id="button_fltr" data-label="button_fltr">
+<rect x="610" y="343" width="53" height="42" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="636.5" y="365.0" fill="#efefef" style="font-family:Arial, Helvetica, sans-serif;font-size:17px;text-anchor:middle;dominant-baseline:middle;">FLTR</text>
+<text x="636.5" y="401" class="subTxt">Setup</text>
+</g>
+<g id="button_amp" data-label="button_amp">
+<rect x="673" y="343" width="53" height="42" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="699.5" y="365.0" fill="#efefef" style="font-family:Arial, Helvetica, sans-serif;font-size:17px;text-anchor:middle;dominant-baseline:middle;">AMP</text>
+<text x="699.5" y="401" class="subTxt">Sequencer</text>
+</g>
+<g id="button_fx" data-label="button_fx">
+<rect x="736" y="343" width="53" height="42" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="762.5" y="365.0" fill="#efefef" style="font-family:Arial, Helvetica, sans-serif;font-size:17px;text-anchor:middle;dominant-baseline:middle;">FX</text>
+<text x="762.5" y="401" class="subTxt">Send FX</text>
+</g>
+<g id="button_mod" data-label="button_mod">
+<rect x="799" y="343" width="53" height="42" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="825.5" y="365.0" fill="#efefef" style="font-family:Arial, Helvetica, sans-serif;font-size:17px;text-anchor:middle;dominant-baseline:middle;">MOD</text>
+<text x="825.5" y="401" class="subTxt">Mixer</text>
+</g>
+</g>
+<g id="center_performance_buttons" data-label="Center performance buttons">
+<g id="perform_button" data-label="perform_button">
+<rect x="188" y="385" width="44" height="44" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="210.0" y="445" class="subTxt">Perform</text>
+</g>
+<line x1="198" y1="399" x2="221" y2="399" stroke="#ececec" stroke-width="3" stroke-linecap="round"/>
+<line x1="198" y1="405" x2="221" y2="405" stroke="#ececec" stroke-width="3" stroke-linecap="round"/>
+<line x1="198" y1="411" x2="221" y2="411" stroke="#ececec" stroke-width="3" stroke-linecap="round"/>
+<g id="save_proj_button" data-label="save_proj_button">
+<rect x="251" y="385" width="44" height="44" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="273.0" y="445" class="subTxt">Save Proj</text>
+</g>
+<line x1="281.5" y1="406.0" x2="285.0" y2="406.0" stroke="#ececec" stroke-width="2"/>
+<line x1="279.0" y1="412.0" x2="281.5" y2="414.5" stroke="#ececec" stroke-width="2"/>
+<line x1="273.0" y1="414.5" x2="273.0" y2="418.0" stroke="#ececec" stroke-width="2"/>
+<line x1="267.0" y1="412.0" x2="264.5" y2="414.5" stroke="#ececec" stroke-width="2"/>
+<line x1="264.5" y1="406.0" x2="261.0" y2="406.0" stroke="#ececec" stroke-width="2"/>
+<line x1="267.0" y1="400.0" x2="264.5" y2="397.5" stroke="#ececec" stroke-width="2"/>
+<line x1="273.0" y1="397.5" x2="273.0" y2="394.0" stroke="#ececec" stroke-width="2"/>
+<line x1="279.0" y1="400.0" x2="281.5" y2="397.5" stroke="#ececec" stroke-width="2"/>
+<circle cx="273" cy="406" r="8" fill="none" stroke="#ececec" stroke-width="2"/>
+<circle cx="273" cy="406" r="3" fill="#ececec"/>
+<g id="samples_button" data-label="samples_button">
+<rect x="314" y="385" width="44" height="44" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="336.0" y="445" class="subTxt">Samples</text>
+</g>
+<line x1="326" y1="400.0" x2="326" y2="412.0" stroke="#ececec" stroke-width="3" stroke-linecap="round"/>
+<line x1="333" y1="397.0" x2="333" y2="415.0" stroke="#ececec" stroke-width="3" stroke-linecap="round"/>
+<line x1="340" y1="401.0" x2="340" y2="411.0" stroke="#ececec" stroke-width="3" stroke-linecap="round"/>
+<line x1="347" y1="396.0" x2="347" y2="416.0" stroke="#ececec" stroke-width="3" stroke-linecap="round"/>
+<g id="tap_tempo_button" data-label="tap_tempo_button">
+<rect x="377" y="385" width="44" height="44" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="399.0" y="445" class="subTxt">Tap Tempo</text>
+</g>
+<path d="M387 414 l12 -18 l9 18 z" fill="none" stroke="#ececec" stroke-width="2.2"/><line x1="393" y1="400" x2="400" y2="390" stroke="#ececec" stroke-width="2.2"/><circle cx="400" cy="390" r="2.6" fill="#ececec"/>
+<g id="copy_button" data-label="copy_button">
+<rect x="178" y="447" width="66" height="41" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="211.0" y="504" class="subTxt">Copy</text>
+</g>
+<circle cx="211" cy="467" r="9" fill="none" stroke="#ff5a65" stroke-width="3"/>
+<g id="clear_button" data-label="clear_button">
+<rect x="250" y="447" width="66" height="41" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="283.0" y="504" class="subTxt">Clear</text>
+</g>
+<path d="M280 456 L280 478 L298 467 Z" fill="none" stroke="#84ff33" stroke-width="4" stroke-linejoin="round"/>
+<g id="paste_button" data-label="paste_button">
+<rect x="322" y="447" width="66" height="41" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="355.0" y="504" class="subTxt">Paste</text>
+</g>
+<rect x="350" y="458" width="16" height="16" rx="3" fill="none" stroke="#ececec" stroke-width="3"/>
+</g>
+<g id="right_navigation_cluster" data-label="Right navigation and transport controls">
+<g id="button_yes" data-label="button_yes">
+<rect x="482" y="414" width="54" height="51" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="509.0" y="440.5" fill="#efefef" style="font-family:Arial, Helvetica, sans-serif;font-size:17px;text-anchor:middle;dominant-baseline:middle;">YES</text>
+<text x="509.0" y="481" class="subTxt">Save</text>
+</g>
+<g id="button_no" data-label="button_no">
+<rect x="482" y="475" width="54" height="51" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="509.0" y="501.5" fill="#efefef" style="font-family:Arial, Helvetica, sans-serif;font-size:17px;text-anchor:middle;dominant-baseline:middle;">NO</text>
+<text x="509.0" y="542" class="subTxt">Reload</text>
+</g>
+<g id="button_up" data-label="button_up">
+<rect x="581" y="414" width="50" height="44" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+</g>
+<path d="M606 425 L594 446 L618 446 Z" fill="none" stroke="#ececec" stroke-width="4" stroke-linejoin="round"/>
+<text x="606" y="477" class="subTxt">Trig Mode</text>
+<g id="button_down" data-label="button_down">
+<rect x="581" y="477" width="50" height="44" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+</g>
+<path d="M606 510 L594 489 L618 489 Z" fill="none" stroke="#ececec" stroke-width="4" stroke-linejoin="round"/>
+<text x="606" y="545" class="subTxt">Trig Mode</text>
+<g id="button_left" data-label="button_left">
+<rect x="546" y="477" width="50" height="44" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+</g>
+<path d="M578 488 L560 499 L578 510" fill="none" stroke="#ececec" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="571" y="545" class="tinyWhite" text-anchor="middle">µTime−</text>
+<g id="button_right" data-label="button_right">
+<rect x="651" y="477" width="50" height="44" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+</g>
+<path d="M669 488 L687 499 L669 510" fill="none" stroke="#ececec" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="676" y="545" class="tinyWhite" text-anchor="middle">µTime+</text>
+<text x="665" y="433" class="tinyWhite" id="kb_octave_label">◊ KB Octave</text>
+<g id="button_page" data-label="button_page">
+<rect x="771" y="478" width="71" height="44" rx="11" ry="11" fill="url(#btnGrad)" stroke="#0d0d0f" stroke-width="2.1" filter="url(#softShadow)"/>
+<text x="806.5" y="501.0" fill="#efefef" style="font-family:Arial, Helvetica, sans-serif;font-size:17px;text-anchor:middle;dominant-baseline:middle;">PAGE</text>
+<text x="806.5" y="538" class="subTxt">Fill/Setup</text>
+</g>
+<g id="led_matrix" data-label="LED status matrix">
+<circle cx="767" cy="429" r="6" fill="#ff4a4a" stroke="#6a2418" stroke-width="1.8" id="led_1"/>
+<circle cx="765.5" cy="427.5" r="2" fill="#fff7d8" opacity="0.55"/>
+<circle cx="790" cy="429" r="6" fill="#ff4a4a" stroke="#6a2418" stroke-width="1.8" id="led_2"/>
+<circle cx="788.5" cy="427.5" r="2" fill="#fff7d8" opacity="0.55"/>
+<circle cx="813" cy="429" r="6" fill="#ff4a4a" stroke="#6a2418" stroke-width="1.8" id="led_3"/>
+<circle cx="811.5" cy="427.5" r="2" fill="#fff7d8" opacity="0.55"/>
+<circle cx="836" cy="429" r="6" fill="#ffb33a" stroke="#6a2418" stroke-width="1.8" id="led_4"/>
+<circle cx="834.5" cy="427.5" r="2" fill="#fff7d8" opacity="0.55"/>
+<circle cx="767" cy="454" r="6" fill="#ff4a4a" stroke="#6a2418" stroke-width="1.8" id="led_5"/>
+<circle cx="765.5" cy="452.5" r="2" fill="#fff7d8" opacity="0.55"/>
+<circle cx="790" cy="454" r="6" fill="#ff4a4a" stroke="#6a2418" stroke-width="1.8" id="led_6"/>
+<circle cx="788.5" cy="452.5" r="2" fill="#fff7d8" opacity="0.55"/>
+<circle cx="813" cy="454" r="6" fill="#ff4a4a" stroke="#6a2418" stroke-width="1.8" id="led_7"/>
+<circle cx="811.5" cy="452.5" r="2" fill="#fff7d8" opacity="0.55"/>
+<circle cx="836" cy="454" r="6" fill="#ff4a4a" stroke="#6a2418" stroke-width="1.8" id="led_8"/>
+<circle cx="834.5" cy="452.5" r="2" fill="#fff7d8" opacity="0.55"/>
+</g>
+</g>
+<g id="pad_matrix" data-label="Sixteen track pads">
+<g id="pad_01" data-label="Pad 1">
+<rect x="187" y="552" width="62" height="62" rx="13" class="pad" stroke="#53161b"/>
+<rect x="194" y="559" width="48" height="48" rx="9" class="padInset"/>
+<rect x="195.5" y="560.5" width="45" height="45" rx="8" fill="none" stroke="#ff5966" stroke-width="2"/>
+<text x="218" y="585" class="numRed">1</text>
+<line x1="201" y1="601" x2="235" y2="601" stroke="#ff5966" stroke-width="3"/>
+</g>
+<g id="pad_02" data-label="Pad 2">
+<rect x="267" y="552" width="62" height="62" rx="13" class="pad" stroke="#40450f"/>
+<rect x="274" y="559" width="48" height="48" rx="9" class="padInset"/>
+<text x="298" y="585" class="numYel">2</text>
+<line x1="281" y1="601" x2="315" y2="601" stroke="#eceb78" stroke-width="3"/>
+</g>
+<g id="pad_03" data-label="Pad 3">
+<rect x="347" y="552" width="62" height="62" rx="13" class="pad" stroke="#383c40"/>
+<rect x="354" y="559" width="48" height="48" rx="9" class="padInset"/>
+<text x="378" y="585" class="numWht">3</text>
+<line x1="361" y1="601" x2="395" y2="601" stroke="#ececec" stroke-width="3"/>
+</g>
+<g id="pad_04" data-label="Pad 4">
+<rect x="427" y="552" width="62" height="62" rx="13" class="pad" stroke="#53161b"/>
+<rect x="434" y="559" width="48" height="48" rx="9" class="padInset"/>
+<text x="458" y="585" class="numRed">4</text>
+<line x1="441" y1="601" x2="475" y2="601" stroke="#ff5966" stroke-width="3"/>
+</g>
+<g id="pad_05" data-label="Pad 5">
+<rect x="507" y="552" width="62" height="62" rx="13" class="pad" stroke="#383c40"/>
+<rect x="514" y="559" width="48" height="48" rx="9" class="padInset"/>
+<rect x="515.5" y="560.5" width="45" height="45" rx="8" fill="none" stroke="#ececec" stroke-width="2"/>
+<text x="538" y="585" class="numWht">5</text>
+<line x1="521" y1="601" x2="555" y2="601" stroke="#ececec" stroke-width="3"/>
+</g>
+<g id="pad_06" data-label="Pad 6">
+<rect x="587" y="552" width="62" height="62" rx="13" class="pad" stroke="#383c40"/>
+<rect x="594" y="559" width="48" height="48" rx="9" class="padInset"/>
+<text x="618" y="585" class="numWht">6</text>
+<line x1="601" y1="601" x2="635" y2="601" stroke="#ececec" stroke-width="3"/>
+</g>
+<g id="pad_07" data-label="Pad 7">
+<rect x="667" y="552" width="62" height="62" rx="13" class="pad" stroke="#383c40"/>
+<rect x="674" y="559" width="48" height="48" rx="9" class="padInset"/>
+<text x="698" y="585" class="numWht">7</text>
+<line x1="681" y1="601" x2="715" y2="601" stroke="#ececec" stroke-width="3"/>
+</g>
+<g id="pad_08" data-label="Pad 8">
+<rect x="747" y="552" width="62" height="62" rx="13" class="pad" stroke="#53161b"/>
+<rect x="754" y="559" width="48" height="48" rx="9" class="padInset"/>
+<text x="778" y="585" class="numRed">8</text>
+<line x1="761" y1="601" x2="795" y2="601" stroke="#ff5966" stroke-width="3"/>
+</g>
+<g id="pad_09" data-label="Pad 9">
+<rect x="187" y="641" width="62" height="62" rx="13" class="pad" stroke="#53161b"/>
+<rect x="194" y="648" width="48" height="48" rx="9" class="padInset"/>
+<rect x="195.5" y="649.5" width="45" height="45" rx="8" fill="none" stroke="#ff5966" stroke-width="2"/>
+<text x="218" y="674" class="numRed">9</text>
+<line x1="201" y1="690" x2="235" y2="690" stroke="#ff5966" stroke-width="3"/>
+</g>
+<g id="pad_10" data-label="Pad 10">
+<rect x="267" y="641" width="62" height="62" rx="13" class="pad" stroke="#383c40"/>
+<rect x="274" y="648" width="48" height="48" rx="9" class="padInset"/>
+<text x="298" y="674" class="numWht">10</text>
+<line x1="281" y1="690" x2="315" y2="690" stroke="#ececec" stroke-width="3"/>
+</g>
+<g id="pad_11" data-label="Pad 11">
+<rect x="347" y="641" width="62" height="62" rx="13" class="pad" stroke="#53161b"/>
+<rect x="354" y="648" width="48" height="48" rx="9" class="padInset"/>
+<text x="378" y="674" class="numRed">11</text>
+<line x1="361" y1="690" x2="395" y2="690" stroke="#ff5966" stroke-width="3"/>
+</g>
+<g id="pad_12" data-label="Pad 12">
+<rect x="427" y="641" width="62" height="62" rx="13" class="pad" stroke="#40450f"/>
+<rect x="434" y="648" width="48" height="48" rx="9" class="padInset"/>
+<text x="458" y="674" class="numYel">12</text>
+<line x1="441" y1="690" x2="475" y2="690" stroke="#eceb78" stroke-width="3"/>
+</g>
+<g id="pad_13" data-label="Pad 13">
+<rect x="507" y="641" width="62" height="62" rx="13" class="pad" stroke="#383c40"/>
+<rect x="514" y="648" width="48" height="48" rx="9" class="padInset"/>
+<rect x="515.5" y="649.5" width="45" height="45" rx="8" fill="none" stroke="#ececec" stroke-width="2"/>
+<text x="538" y="674" class="numWht">13</text>
+<line x1="521" y1="690" x2="555" y2="690" stroke="#ececec" stroke-width="3"/>
+</g>
+<g id="pad_14" data-label="Pad 14">
+<rect x="587" y="641" width="62" height="62" rx="13" class="pad" stroke="#53161b"/>
+<rect x="594" y="648" width="48" height="48" rx="9" class="padInset"/>
+<text x="618" y="674" class="numRed">14</text>
+<line x1="601" y1="690" x2="635" y2="690" stroke="#ff5966" stroke-width="3"/>
+</g>
+<g id="pad_15" data-label="Pad 15">
+<rect x="667" y="641" width="62" height="62" rx="13" class="pad" stroke="#53161b"/>
+<rect x="674" y="648" width="48" height="48" rx="9" class="padInset"/>
+<text x="698" y="674" class="numRed">15</text>
+<line x1="681" y1="690" x2="715" y2="690" stroke="#ff5966" stroke-width="3"/>
+</g>
+<g id="pad_16" data-label="Pad 16">
+<rect x="747" y="641" width="62" height="62" rx="13" class="pad" stroke="#40450f"/>
+<rect x="754" y="648" width="48" height="48" rx="9" class="padInset"/>
+<text x="778" y="674" class="numYel">16</text>
+<line x1="761" y1="690" x2="795" y2="690" stroke="#eceb78" stroke-width="3"/>
+</g>
+<line id="pad_marker_1" x1="209" y1="635" x2="229" y2="635" stroke="#d2d2d2" stroke-width="2" stroke-dasharray="1.8,4.2"/>
+<line id="pad_marker_2" x1="769" y1="635" x2="789" y2="635" stroke="#d2d2d2" stroke-width="2" stroke-dasharray="1.8,4.2"/>
+</g>
+</svg>

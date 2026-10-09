@@ -142,8 +142,42 @@ TaktAudioProcessor::TaktAudioProcessor()
             trackValues[static_cast<size_t>(t)][p] = parameters.getRawParameterValue(trackParameterID(t, trackNames[p]));
     }
     for (size_t p = 0; p < std::size(globalNames); ++p)
+    {
         globalValues[p] = parameters.getRawParameterValue(globalNames[p]);
+        appliedGlobals[p] = globalValues[p]->load();
+    }
     loadDemoPattern();
+    {
+        std::lock_guard<std::mutex> lock(controlMutex);
+        permanentPattern = capturePatternLocked();
+    }
+    for (int t = 0; t < takt::numTracks; ++t)
+        for (const char* name : trackNames)
+            parameters.addParameterListener(trackParameterID(t, name), this);
+    for (const char* name : globalNames) parameters.addParameterListener(name, this);
+}
+
+TaktAudioProcessor::~TaktAudioProcessor()
+{
+    for (int t = 0; t < takt::numTracks; ++t)
+        for (const char* name : trackNames)
+            parameters.removeParameterListener(trackParameterID(t, name), this);
+    for (const char* name : globalNames) parameters.removeParameterListener(name, this);
+}
+
+void TaktAudioProcessor::parameterChanged(const juce::String& id, float)
+{
+    // Called by host automation as well as the editor. An atomic revision
+    // invalidates a stale edit undo without taking a lock on the audio thread.
+    if (id != "play" && id != "hostSync" && id != "master")
+        editRevision.fetch_add(1, std::memory_order_relaxed);
+}
+
+void TaktAudioProcessor::notifyPatternChanged()
+{
+    // Never call this while holding controlMutex: host listeners may query
+    // sequencer state synchronously from this notification.
+    updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
 }
 
 bool TaktAudioProcessor::isBusesLayoutSupported(const BusesLayout& layout) const
@@ -183,23 +217,23 @@ void TaktAudioProcessor::releaseResources() { engine.reset(); }
 
 void TaktAudioProcessor::syncControls()
 {
-    if (patternDirty.load() || samplesDirty.load())
+    // Keep the previous complete audio snapshot if a UI edit/restore owns the
+    // mutex. No blocking or partially restored pattern reaches the renderer.
+    std::unique_lock<std::mutex> lock(controlMutex, std::try_to_lock);
+    if (!lock.owns_lock() || restoringPattern) return;
+    if (samplesDirty.exchange(false))
+        for (int t = 0; t < takt::numTracks; ++t)
+            engine.setSample(t, samples[static_cast<size_t>(t)]);
+    if (patternDirty.exchange(false))
     {
-        std::unique_lock<std::mutex> lock(controlMutex, std::try_to_lock);
-        if (lock.owns_lock())
+        for (int t = 0; t < takt::numTracks; ++t)
         {
-            if (samplesDirty.exchange(false))
-                for (int t = 0; t < takt::numTracks; ++t)
-                    engine.setSample(t, samples[static_cast<size_t>(t)]);
-            if (patternDirty.exchange(false))
-                for (int t = 0; t < takt::numTracks; ++t)
-                {
-                    engine.setTrackLength(t, lengths[static_cast<size_t>(t)]);
-                    for (int s = 0; s < takt::maxSteps; ++s)
-                        engine.setStep(t, s, steps[static_cast<size_t>(t)][static_cast<size_t>(s)]);
-                }
+            engine.setTrackLength(t, lengths[static_cast<size_t>(t)]);
+            for (int s = 0; s < takt::maxSteps; ++s)
+                engine.setStep(t, s, steps[static_cast<size_t>(t)][static_cast<size_t>(s)]);
         }
     }
+    for (size_t p = 0; p < appliedGlobals.size(); ++p) appliedGlobals[p] = globalValues[p]->load();
     for (int t = 0; t < takt::numTracks; ++t)
     {
         const auto& values = trackValues[static_cast<size_t>(t)];
@@ -213,10 +247,10 @@ void TaktAudioProcessor::syncControls()
         engine.setTrackParams(t, p);
     }
     takt::FxParams fx;
-    fx.delayMix = globalValues[5]->load(); fx.feedback = globalValues[6]->load();
-    fx.delayBeats = globalValues[7]->load(); fx.reverbMix = globalValues[8]->load();
+    fx.delayMix = appliedGlobals[5]; fx.feedback = appliedGlobals[6];
+    fx.delayBeats = appliedGlobals[7]; fx.reverbMix = appliedGlobals[8];
     engine.setFx(fx);
-    engine.setSwing(globalValues[3]->load());
+    engine.setSwing(appliedGlobals[3]);
 }
 
 void TaktAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -227,7 +261,7 @@ void TaktAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     if (count <= 0 || buffer.getNumChannels() < 2) return;
     syncControls();
     takt::Transport transport;
-    transport.bpm = globalValues[2]->load();
+    transport.bpm = appliedGlobals[2];
     transport.playing = globalValues[0]->load() > 0.5f;
     bool following = false;
     if (globalValues[1]->load() > 0.5f)
@@ -302,8 +336,9 @@ void TaktAudioProcessor::setStep(int track, int step, const takt::Step& value)
         std::lock_guard<std::mutex> lock(controlMutex);
         steps[static_cast<size_t>(track)][static_cast<size_t>(step)] = sanitizedStep(value);
         patternDirty.store(true);
+        editRevision.fetch_add(1, std::memory_order_relaxed);
     }
-    updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
+    notifyPatternChanged();
 }
 
 int TaktAudioProcessor::getTrackLength(int track) const
@@ -320,8 +355,9 @@ void TaktAudioProcessor::setTrackLength(int track, int length)
         std::lock_guard<std::mutex> lock(controlMutex);
         lengths[static_cast<size_t>(track)] = juce::jlimit(1, takt::maxSteps, length);
         patternDirty.store(true);
+        editRevision.fetch_add(1, std::memory_order_relaxed);
     }
-    updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
+    notifyPatternChanged();
 }
 
 void TaktAudioProcessor::clearTrack(int track)
@@ -331,8 +367,227 @@ void TaktAudioProcessor::clearTrack(int track)
         std::lock_guard<std::mutex> lock(controlMutex);
         steps[static_cast<size_t>(track)].fill(takt::Step{});
         patternDirty.store(true);
+        editRevision.fetch_add(1, std::memory_order_relaxed);
     }
-    updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
+    notifyPatternChanged();
+}
+
+bool TaktAudioProcessor::selectionRange(EditScope scope, int track, int stepIndex,
+                                      int pageIndex, int& first, int& count)
+{
+    if (!validTrack(track)) return false;
+    switch (scope)
+    {
+        case EditScope::Step:
+            if (stepIndex < 0 || stepIndex >= takt::maxSteps) return false;
+            first = stepIndex; count = 1;
+            return true;
+        case EditScope::Page:
+            if (pageIndex < 0 || pageIndex >= takt::maxSteps / 16) return false;
+            first = pageIndex * 16; count = 16;
+            return true;
+        case EditScope::Track:
+            first = 0; count = takt::maxSteps;
+            return true;
+    }
+    return false;
+}
+
+TaktAudioProcessor::EditResult TaktAudioProcessor::copySelection(EditScope scope, int track,
+                                                               int stepIndex, int pageIndex)
+{
+    int first = 0, count = 0;
+    if (!selectionRange(scope, track, stepIndex, pageIndex, first, count)) return EditResult::InvalidSelection;
+    std::lock_guard<std::mutex> lock(controlMutex);
+    if (restoringPattern) return EditResult::InvalidSelection;
+    std::copy_n(steps[static_cast<size_t>(track)].begin() + first, count, clipboard.content.begin());
+    clipboard.scope = scope;
+    clipboard.length = lengths[static_cast<size_t>(track)];
+    clipboard.available = true;
+    // Copy replaces the shared typed clipboard, but changes no audio state.
+    undoEdit.available = false;
+    return EditResult::Applied;
+}
+
+bool TaktAudioProcessor::canUndoEditLocked() const
+{
+    return !restoringPattern && undoEdit.available
+           && undoEdit.revision == editRevision.load(std::memory_order_relaxed);
+}
+
+bool TaktAudioProcessor::canUndoEdit() const
+{
+    std::lock_guard<std::mutex> lock(controlMutex);
+    return canUndoEditLocked();
+}
+
+bool TaktAudioProcessor::undoEditLocked()
+{
+    if (!canUndoEditLocked()) return false;
+    std::copy_n(undoEdit.content.begin(), undoEdit.count,
+                steps[static_cast<size_t>(undoEdit.track)].begin() + undoEdit.first);
+    if (undoEdit.scope == EditScope::Track)
+        lengths[static_cast<size_t>(undoEdit.track)] = undoEdit.length;
+    undoEdit.available = false;
+    editRevision.fetch_add(1, std::memory_order_relaxed);
+    patternDirty.store(true);
+    return true;
+}
+
+TaktAudioProcessor::EditResult TaktAudioProcessor::undoLastEdit()
+{
+    {
+        std::lock_guard<std::mutex> lock(controlMutex);
+        if (!undoEditLocked()) return EditResult::NothingToUndo;
+    }
+    notifyPatternChanged();
+    return EditResult::Undone;
+}
+
+TaktAudioProcessor::EditResult TaktAudioProcessor::pasteSelection(EditScope scope, int track,
+                                                                int stepIndex, int pageIndex)
+{
+    int first = 0, count = 0;
+    if (!selectionRange(scope, track, stepIndex, pageIndex, first, count)) return EditResult::InvalidSelection;
+    EditResult result = EditResult::Applied;
+    {
+        std::lock_guard<std::mutex> lock(controlMutex);
+        if (restoringPattern) return EditResult::InvalidSelection;
+        if (!clipboard.available) return EditResult::EmptyClipboard;
+        if (clipboard.scope != scope) return EditResult::ScopeMismatch;
+        if (canUndoEditLocked() && undoEdit.action == EditAction::Paste
+            && undoEdit.scope == scope && undoEdit.track == track && undoEdit.first == first)
+        {
+            undoEditLocked();
+            result = EditResult::Undone;
+        }
+        else
+        {
+            std::copy_n(steps[static_cast<size_t>(track)].begin() + first, count, undoEdit.content.begin());
+            undoEdit.scope = scope; undoEdit.action = EditAction::Paste;
+            undoEdit.track = track; undoEdit.first = first; undoEdit.count = count;
+            undoEdit.length = lengths[static_cast<size_t>(track)];
+            std::copy_n(clipboard.content.begin(), count, steps[static_cast<size_t>(track)].begin() + first);
+            if (scope == EditScope::Track) lengths[static_cast<size_t>(track)] = clipboard.length;
+            undoEdit.revision = editRevision.fetch_add(1, std::memory_order_relaxed) + 1;
+            undoEdit.available = true;
+            patternDirty.store(true);
+        }
+    }
+    notifyPatternChanged();
+    return result;
+}
+
+TaktAudioProcessor::EditResult TaktAudioProcessor::clearSelection(EditScope scope, int track,
+                                                                int stepIndex, int pageIndex)
+{
+    int first = 0, count = 0;
+    if (!selectionRange(scope, track, stepIndex, pageIndex, first, count)) return EditResult::InvalidSelection;
+    EditResult result = EditResult::Applied;
+    {
+        std::lock_guard<std::mutex> lock(controlMutex);
+        if (restoringPattern) return EditResult::InvalidSelection;
+        if (canUndoEditLocked() && undoEdit.action == EditAction::Clear
+            && undoEdit.scope == scope && undoEdit.track == track && undoEdit.first == first)
+        {
+            undoEditLocked();
+            result = EditResult::Undone;
+        }
+        else
+        {
+            auto begin = steps[static_cast<size_t>(track)].begin() + first;
+            std::copy_n(begin, count, undoEdit.content.begin());
+            undoEdit.scope = scope; undoEdit.action = EditAction::Clear;
+            undoEdit.track = track; undoEdit.first = first; undoEdit.count = count;
+            undoEdit.length = lengths[static_cast<size_t>(track)];
+            if (scope == EditScope::Step)
+            {
+                // Legacy DSP also uses a nonlocked step pitch additively.
+                // Remove this lock payload to make the new Clear Locks action
+                // audibly return to the base tuning without changing that DSP.
+                begin->pitch = 0.0f;
+                begin->lockPitch = false;
+                begin->lockCutoff = false;
+            }
+            else std::fill_n(begin, count, takt::Step{});
+            undoEdit.revision = editRevision.fetch_add(1, std::memory_order_relaxed) + 1;
+            undoEdit.available = true;
+            patternDirty.store(true);
+        }
+    }
+    notifyPatternChanged();
+    return result;
+}
+
+void TaktAudioProcessor::retainSampleLocked(const std::shared_ptr<const takt::Sample>& sample)
+{
+    // Retain replaced samples until the renderer has dropped its reference.
+    // Avoid duplicates: duplicate retired owners would keep each other alive.
+    if (sample && std::find(retiredSamples.begin(), retiredSamples.end(), sample) == retiredSamples.end())
+        retiredSamples.push_back(sample);
+}
+
+std::shared_ptr<const TaktAudioProcessor::PatternSnapshot> TaktAudioProcessor::capturePatternLocked() const
+{
+    auto snapshot = std::make_shared<PatternSnapshot>();
+    snapshot->steps = steps;
+    snapshot->lengths = lengths;
+    snapshot->samples = samples;
+    for (size_t t = 0; t < snapshot->trackParameters.size(); ++t)
+        for (size_t p = 0; p < snapshot->trackParameters[t].size(); ++p)
+            snapshot->trackParameters[t][p] = trackValues[t][p]->load();
+    for (size_t p = 0; p < snapshot->globalParameters.size(); ++p)
+        snapshot->globalParameters[p] = globalValues[p]->load();
+    return snapshot;
+}
+
+void TaktAudioProcessor::temporarySavePattern()
+{
+    std::lock_guard<std::mutex> lock(controlMutex);
+    if (!restoringPattern) temporaryPattern = capturePatternLocked();
+}
+
+void TaktAudioProcessor::restorePattern(const PatternSnapshot& snapshot)
+{
+    {
+        std::lock_guard<std::mutex> lock(controlMutex);
+        if (restoringPattern) return;
+        restoringPattern = true;
+        for (size_t t = 0; t < samples.size(); ++t)
+            if (samples[t] != snapshot.samples[t]) retainSampleLocked(samples[t]);
+        steps = snapshot.steps;
+        lengths = snapshot.lengths;
+        samples = snapshot.samples;
+        for (size_t t = 0; t < samples.size(); ++t)
+            sampleDurations[t].store(samples[t]->left.size() / samples[t]->sampleRate);
+        undoEdit.available = false;
+        editRevision.fetch_add(1, std::memory_order_relaxed);
+        patternDirty.store(true); samplesDirty.store(true);
+    }
+    // Parameter and host callbacks may synchronously query sequencer state.
+    // Keep them outside controlMutex; syncControls retains its audio snapshot
+    // until every parameter has been restored and restoringPattern is cleared.
+    for (int t = 0; t < takt::numTracks; ++t)
+        for (size_t p = 0; p < std::size(trackNames); ++p)
+            setParameter(trackParameterID(t, trackNames[p]), snapshot.trackParameters[static_cast<size_t>(t)][p]);
+    for (size_t p = 0; p < std::size(globalNames); ++p)
+        if (p != 0 && p != 1 && p != 4)
+            setParameter(globalNames[p], snapshot.globalParameters[p]);
+    {
+        std::lock_guard<std::mutex> lock(controlMutex);
+        restoringPattern = false;
+    }
+    notifyPatternChanged();
+}
+
+void TaktAudioProcessor::temporaryReloadPattern()
+{
+    std::shared_ptr<const PatternSnapshot> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(controlMutex);
+        snapshot = temporaryPattern ? temporaryPattern : permanentPattern;
+    }
+    if (snapshot) restorePattern(*snapshot);
 }
 
 void TaktAudioProcessor::loadDemoPattern()
@@ -348,8 +603,9 @@ void TaktAudioProcessor::loadDemoPattern()
     steps[8][7].lockPitch = true; steps[8][7].pitch = 7;
     steps[8][10].lockPitch = true; steps[8][10].pitch = 12;
     patternDirty.store(true);
+    editRevision.fetch_add(1, std::memory_order_relaxed);
     lock.unlock();
-    updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
+    notifyPatternChanged();
 }
 
 void TaktAudioProcessor::triggerTrack(int track, float velocity)
@@ -384,13 +640,14 @@ bool TaktAudioProcessor::loadSample(int track, const juce::File& file, juce::Str
         for (float& v : *channel) if (!std::isfinite(v)) v = 0;
     {
         std::lock_guard<std::mutex> lock(controlMutex);
-        retiredSamples.push_back(samples[static_cast<size_t>(track)]);
+        retainSampleLocked(samples[static_cast<size_t>(track)]);
         samples[static_cast<size_t>(track)] = std::move(sample);
         sampleDurations[static_cast<size_t>(track)].store(count / reader->sampleRate);
         samplesDirty.store(true);
+        editRevision.fetch_add(1, std::memory_order_relaxed);
     }
     error.clear();
-    updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
+    notifyPatternChanged();
     return true;
 }
 
@@ -512,16 +769,28 @@ void TaktAudioProcessor::setStateInformation(const void* data, int size)
         }
     }
     state.removeChild(sequencer, nullptr);
-    parameters.replaceState(state);
     {
         std::lock_guard<std::mutex> lock(controlMutex);
-        for (auto& sample : samples) retiredSamples.push_back(sample);
+        if (restoringPattern) return;
+        for (auto& sample : samples) retainSampleLocked(sample);
+        restoringPattern = true;
         steps = nextSteps; lengths = nextLengths; samples = std::move(nextSamples);
         for (int t = 0; t < takt::numTracks; ++t)
             sampleDurations[static_cast<size_t>(t)].store(samples[static_cast<size_t>(t)]->left.size()
                                                        / samples[static_cast<size_t>(t)]->sampleRate);
+        clipboard.available = false; undoEdit.available = false;
+        temporaryPattern.reset();
+        editRevision.fetch_add(1, std::memory_order_relaxed);
         patternDirty.store(true); samplesDirty.store(true);
     }
+    parameters.replaceState(state);
+    {
+        std::lock_guard<std::mutex> lock(controlMutex);
+        permanentPattern = capturePatternLocked();
+        restoringPattern = false;
+    }
+    // This is DAW/preset recall, not a user edit. Do not mark a freshly loaded
+    // project dirty; the editor refreshes the restored state from its timer.
 }
 
 juce::AudioProcessorEditor* TaktAudioProcessor::createEditor() { return new TaktAudioProcessorEditor(*this); }

@@ -16,9 +16,30 @@ jobs:
         run: cmake --build build --config Release --parallel 3
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Verify Windows VST3 and editor
+        shell: pwsh
+        run: |
+          & ".\build\TaktTests_artefacts\Release\TaktTests.exe" --gui "build/editor-0.2.png" --host "build/TaktII_artefacts/Release/VST3/Takt II.vst3"
+          if ($LASTEXITCODE -ne 0) { throw "Windows VST3/editor validation failed" }
+      - name: Stage installable bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist/windows -Force | Out-Null
+          Copy-Item -LiteralPath "build/TaktII_artefacts/Release/VST3/Takt II.vst3" -Destination dist/windows -Recurse
+          Copy-Item -LiteralPath "build/editor-0.2.png" -Destination dist/windows/PREVIEW.png
+          @'
+          Takt II - Windows x64 / Ableton Live
+
+          Fermez Live puis copiez le dossier entier Takt II.vst3 dans :
+          C:\Program Files\Common Files\VST3\
+          Remplacez la version precedente, puis reouvrez Live et reanalysez les plug-ins.
+
+          Guide : https://github.com/BaptisteBulabois/digitakt/blob/main/docs/INSTALL_WINDOWS.md
+          Workflow : https://github.com/BaptisteBulabois/digitakt/blob/main/docs/WORKFLOW_0_2.md
+          '@ | Set-Content -Path dist/windows/LISEZ-MOI.txt -Encoding utf8
       - name: Upload VST3 bundle
         uses: actions/upload-artifact@v4
         with:
           name: Takt-II-Windows-VST3
-          path: build/TaktII_artefacts/Release/VST3/Takt II.vst3
+          path: dist/windows/
           if-no-files-found: error

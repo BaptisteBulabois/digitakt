@@ -8,18 +8,25 @@ La priorité est maintenant la **fidélité de l'interface et du workflow musica
 
 Le manuel officiel **OS 1.17** et les notes des versions ont été analysés avec
 des agents. La [spécification de workflow](docs/WORKFLOW_SPEC.md) décrit les
-écarts du prototype, les références et les étapes d'implémentation. Cet audit
-ne modifie pas le VST3 déjà installé.
+références et les étapes d'implémentation. La version **0.2.0** commence cette
+évolution : six familles de pages, huit commandes A–H, édition contextuelle,
+copie/collage avec annulation et sauvegarde temporaire du pattern.
+
+![Interface de Takt II 0.2.0](docs/images/takt-ii-0.2.png)
+
+Le [guide du workflow 0.2](docs/WORKFLOW_0_2.md) explique les gestes et les
+adaptations du VST. Les machines et paramètres encore absents restent identifiés
+dans l'interface ; cette version ne représente pas une reproduction complète.
 
 ## Jouer dans Live
 
 1. Copier le dossier complet `Takt II.vst3` dans `C:\Program Files\Common Files\VST3\` (ou un dossier VST3 personnalisé de Live).
 2. Activer les plugins VST3 dans **Préférences → Plug-ins** et relancer l'analyse.
-3. Charger **Takt II** sur une piste MIDI. Activer **Host** dans le plugin et lancer le transport de Live : le pattern de démonstration joue immédiatement.
+3. Charger **Takt II** sur une piste MIDI. Activer **HOST SYNC** dans le plugin et lancer le transport de Live : le pattern de démonstration joue immédiatement.
 4. Les notes MIDI **36 à 51** déclenchent les pistes **1 à 16**, indépendamment du séquenceur. Cette correspondance est propre au plugin.
-5. Sélectionner une piste, utiliser **Import**, puis cliquer sur les pas pour écrire un pattern. Les sons intégrés permettent de jouer sans importer de fichiers.
+5. Sélectionner une piste, utiliser **IMPORT SAMPLE**, activer **REC** pour éditer les pas, puis cliquer sur les pads pour écrire un pattern. Avec REC désactivé, les pads jouent les pistes. Les sons intégrés permettent de jouer sans importer de fichiers.
 
-Avec **Host** désactivé, **Run** et le tempo interne pilotent le séquenceur. Les samples et le pattern sont intégrés dans l'état du plugin enregistré avec le projet Live ; le fichier original peut ensuite être déplacé.
+Avec **HOST SYNC** désactivé, **PLAY** permet la lecture et la pause au tempo interne. Les samples et le pattern sont intégrés dans l'état du plugin enregistré avec le projet Live ; le fichier original peut ensuite être déplacé.
 
 ## Fonctions implémentées
 
@@ -33,9 +40,16 @@ Avec **Host** désactivé, **Run** et le tempo interne pilotent le séquenceur. 
 | Pas | Vélocité, probabilité déterministe, condition tous les N cycles, locks de hauteur et de fréquence du filtre |
 | Effets | Delay ping-pong synchronisé au tempo et réverbération algorithmique, envois par piste |
 | DAW | VST3 instrument, MIDI, tempo/PPQ/transport du host, paramètres automatisables, rappel de l'état |
+| Interface | Six familles TRIG/SRC/FLTR/AMP/FX/MOD, huit commandes A–H, sous-pages, niveau piste distinct, modes jeu/édition GRID |
+| Édition | Presse-papiers partagé pas/page/piste, annulation du collage/effacement par répétition, sauvegarde et rappel temporaires |
 | Démonstration | 16 samples synthétisés et un pattern original prêt à jouer |
 
-Un clic sur un pas active/désactive son trig et le sélectionne. Un clic droit ou un clic avec modificateur sélectionne un pas pour éditer ses paramètres. La longueur du pattern se règle par piste. Le bouton **Clear** efface les pas de la piste sélectionnée.
+En mode GRID, un clic sur un pas active/désactive son trig et le sélectionne.
+Un clic droit sélectionne un pas sans le basculer. La longueur se règle par
+piste. COPY/PASTE/CLEAR appliquent la portée choisie : locks du pas, page ou
+séquence de piste. Répéter PASTE ou CLEAR annule l'opération correspondante.
+TEMP SAVE crée un point de restauration musical ; TEMP RELOAD y revient
+sans changer la source d'horloge ou le transport.
 
 Les fonctions non implémentées sont décrites dans [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md). L'utilisateur a confirmé l'installation du VST3 dans Ableton Live ; les comportements musicaux doivent encore être vérifiés dans Live.
 

@@ -6,6 +6,7 @@
 
 class TaktAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                        private juce::Timer,
+                                       private juce::KeyListener,
                                        public juce::FileDragAndDropTarget
 {
 public:
@@ -15,6 +16,8 @@ public:
     void resized() override;
     bool isInterestedInFileDrag(const juce::StringArray&) override;
     void filesDropped(const juce::StringArray&, int, int) override;
+    using juce::AudioProcessorEditor::keyPressed;
+    bool keyPressed(const juce::KeyPress&, juce::Component*) override;
 
 private:
     class HardwareLookAndFeel;
@@ -23,6 +26,15 @@ private:
     class TrackPad;
     class StepPad;
     class Waveform;
+    enum class Family { Trig, Source, Filter, Amp, Fx, Mod };
+    enum class View { Parameters, StepTools, SendFx };
+    enum class ValueFormat { Number, Integer, Percent, Pitch, Hertz, Milliseconds, Seconds, Beats };
+    enum class BindingKind { Unavailable, Parameter, Step, Playback };
+    struct Binding
+    {
+        BindingKind kind = BindingKind::Unavailable;
+        juce::String parameterID, stepField;
+    };
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
@@ -31,12 +43,31 @@ private:
     void layoutPanel();
     void selectTrack(int);
     void selectStep(int, bool toggle);
+    void selectFamily(Family);
+    void changeParameterPage(int delta);
+    void selectSequencerPage(int page);
+    void showView(View);
+    void goBack();
+    void rebuildControls();
+    void bindParameter(int slot, const juce::String& name, const juce::String& label,
+                       ValueFormat, const juce::String& tooltip, bool global = false);
+    void bindStep(int slot, const juce::String& field, const juce::String& label,
+                  double low, double high, double interval, ValueFormat, const juce::String& tooltip);
+    void bindUnavailable(int slot, const juce::String& label, const juce::String& reason);
+    void bindPlayback(int slot);
+    void formatSlider(juce::Slider&, ValueFormat);
     void refreshSteps();
-    void refreshStepControls();
+    void refreshControls();
     void changeStep(const std::function<void(takt::Step&)>&);
+    void editSelection(int action);
+    void undoEdit();
+    int parameterPageCount() const;
+    bool editingText() const;
     void chooseSample();
     void importSample(const juce::File&);
     void showStatus(const juce::String&, bool error = false);
+    void updateVisibility();
+    void internalPlayPause();
 
     TaktAudioProcessor& processor;
     std::unique_ptr<HardwareLookAndFeel> skin;
@@ -46,23 +77,42 @@ private:
     std::array<std::unique_ptr<TrackPad>, takt::numTracks> trackPads;
     std::array<std::unique_ptr<StepPad>, 16> stepPads;
     std::array<juce::TextButton, 8> pageButtons;
-    std::array<std::unique_ptr<Dial>, 13> trackDials;
-    std::array<std::unique_ptr<Dial>, 8> stepDials;
-    std::array<std::unique_ptr<Dial>, 4> fxDials;
+    std::array<std::unique_ptr<Dial>, 8> encoders;
+    std::array<Binding, 8> bindings;
+    std::array<juce::TextButton, 6> familyButtons;
     std::array<std::unique_ptr<Dial>, 3> transportDials;
-    juce::TextButton runButton{"RUN"}, hostButton{"HOST SYNC"};
-    juce::TextButton demoButton{"DEMO PATTERN"}, clearButton{"CLEAR TRACK"};
+    std::unique_ptr<Dial> trackLevel;
+    juce::TextButton runButton{"PLAY / PAUSE"}, hostButton{"HOST SYNC"};
+    juce::TextButton demoButton{"LOAD DEMO"}, clearButton{"CLEAR LOCKS"};
     juce::TextButton importButton{"IMPORT SAMPLE"}, triggerButton{"AUDITION"};
     juce::TextButton reverseButton{"REVERSE"}, muteButton{"MUTE"}, loopButton{"LOOP"};
     juce::TextButton pitchLockButton{"PITCH LOCK"}, cutoffLockButton{"FILTER LOCK"};
+    juce::TextButton previousPageButton{"<"}, nextPageButton{">"};
+    juce::TextButton gridButton{"REC / GRID"}, stepToolsButton{"STEP TOOLS"}, sendFxButton{"SEND FX"};
+    juce::TextButton copyButton{"COPY"}, pasteButton{"PASTE"}, undoButton{"UNDO"};
+    juce::TextButton temporarySaveButton{"TEMP SAVE"}, temporaryReloadButton{"TEMP RELOAD"};
+    juce::TextButton noButton{"NO / BACK"}, helpButton{"?"};
+    juce::TextButton funcButton{"FUNC"}, stopButton{"STOP"}, yesButton{"YES"};
+    juce::TextButton trkButton{"TRK"}, pageButton{"PAGE"}, toolsButton{"VST TOOLS"};
+    std::array<juce::TextButton, 3> unavailableButtons;
+    std::array<juce::TextButton, 4> centreButtons;
+    juce::TextButton leftButton{"<"}, rightButton{">"};
+    juce::Label drawerBackdrop;
+    juce::ComboBox editScope;
     juce::Slider patternLength;
-    juce::Label sampleLabel, sampleInfoLabel, statusLabel;
-    std::vector<std::unique_ptr<SliderAttachment>> trackAttachments;
+    juce::Label sampleLabel, sampleInfoLabel, statusLabel, helpLabel;
+    std::vector<std::unique_ptr<SliderAttachment>> controlAttachments;
+    std::unique_ptr<SliderAttachment> levelAttachment;
     std::vector<std::unique_ptr<ButtonAttachment>> trackButtonAttachments;
     std::vector<std::unique_ptr<SliderAttachment>> globalAttachments;
     std::vector<std::unique_ptr<ButtonAttachment>> globalButtonAttachments;
     std::unique_ptr<juce::FileChooser> fileChooser;
     int selectedTrack = 0, selectedStep = 0, selectedPage = 0;
+    Family family = Family::Source;
+    View view = View::Parameters;
+    std::array<int, 6> parameterPages{};
+    bool gridRecording = true, helpVisible = false;
+    bool toolsVisible = false;
     bool refreshing = false;
     float displayedPeak = 0.0f;
     double statusExpiry = 0.0;

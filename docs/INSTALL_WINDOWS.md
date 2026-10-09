@@ -1,13 +1,15 @@
 # Installer Takt II sous Windows et Ableton Live
 
-Ce guide concerne Windows 10/11 64 bits et Ableton Live 11 ou 12. Takt II est un instrument VST3 : il doit être chargé sur une piste MIDI.
+Ce guide concerne Takt II 0.2.0, Windows 10/11 64 bits et Ableton Live 11 ou 12.
+Takt II est un instrument VST3 : il doit être chargé sur une piste MIDI.
 
 ## Méthode simple : télécharger le build GitHub
 
 Chaque envoi sur la branche `main` lance une compilation Windows automatique.
 
 1. Ouvrir le dépôt GitHub, puis l'onglet **Actions**.
-2. Ouvrir la dernière exécution **Build Windows VST3** marquée d'une coche verte.
+2. Ouvrir l'exécution **Build Windows VST3** correspondant à la version souhaitée,
+   marquée d'une coche verte.
 3. Dans **Artifacts**, télécharger `Takt-II-Windows-VST3`.
 4. Décompresser l'archive. Elle contient le dossier `Takt II.vst3`.
 5. Copier ce dossier complet dans :
@@ -23,6 +25,19 @@ Chaque envoi sur la branche `main` lance une compilation Windows automatique.
 8. Dans le navigateur de Live, ouvrir **Plug-ins > VST3**, puis faire glisser **Takt II** sur une piste MIDI.
 
 Si aucune exécution verte n'est encore affichée, utiliser la méthode de compilation ci-dessous et consulter les erreurs dans l'onglet Actions.
+
+## Mettre à jour une installation existante
+
+1. Sauvegarder le projet Live, puis fermer Live.
+2. Télécharger et décompresser le nouveau build comme indiqué ci-dessus.
+3. Remplacer le dossier complet `Takt II.vst3` dans
+   `C:\Program Files\Common Files\VST3\` par le nouveau bundle.
+4. Rouvrir Live et réanalyser les plug-ins si nécessaire, puis ouvrir le projet
+   existant : conserver son instance de Takt II pour retrouver ses réglages.
+
+La version 0.2.0 conserve l'identité VST3 et les identifiants des paramètres de
+la première version. Le rappel des anciens projets Live reste pris en charge ;
+les nouvelles pages présentent les mêmes paramètres automatisables.
 
 ## Compiler soi-même
 
@@ -76,9 +91,12 @@ Set-ExecutionPolicy -Scope Process Bypass
 2. Charger **Takt II** depuis **Plug-ins > VST3**.
 3. Laisser **HOST SYNC** activé, puis lancer le transport de Live pour entendre le pattern de démonstration.
 4. Les notes MIDI 36 à 51 déclenchent les pistes 1 à 16.
-5. Choisir une piste, cliquer sur **IMPORT SAMPLE**, puis activer des pas dans le séquenceur.
+5. Choisir une piste, cliquer sur **IMPORT SAMPLE**, puis activer **REC** pour
+   éditer les pas du séquenceur.
 
-Le bouton **AUDITION** écoute la piste sélectionnée. Avec **HOST SYNC** désactivé, **RUN** utilise le tempo interne du plugin. Les samples et le pattern sont sauvegardés dans le projet Live.
+Le bouton **AUDITION** écoute la piste sélectionnée. Avec **HOST SYNC**
+désactivé, **PLAY** permet la lecture et la pause au tempo interne. Les samples et
+le pattern sont sauvegardés dans le projet Live.
 
 ## Dépannage
 
@@ -101,9 +119,14 @@ Lancer **Visual Studio Installer**, sélectionner **Modifier**, puis ajouter **D
 
 - Démarrer le transport de Live lorsque **HOST SYNC** est actif.
 - Cliquer sur **AUDITION** pour vérifier le son de la piste sélectionnée.
-- Charger le pattern avec **DEMO PATTERN**.
+- Charger le pattern avec **LOAD DEMO**.
 - Vérifier le volume de la piste, le volume **MASTER** et les mutes.
 
-## Limites de cette version
+## Workflow et périmètre
 
-Takt II reproduit le workflow principal d'un sampler/séquenceur à 16 pistes. Il ne contient aucun firmware ni sample Elektron et ne prétend pas être une copie sonore exacte du Digitakt II. Les machines avancées, le time stretch, les LFO, le sampling direct, Overbridge et les formats de projets Elektron ne sont pas encore implémentés. Voir [le périmètre de reverse engineering](REVERSE_ENGINEERING.md).
+Le [guide de la version 0.2.0](WORKFLOW_0_2.md) décrit les pages, les modes de
+jeu/édition et les opérations de copie et restauration disponibles. Il distingue
+les gestes adaptés à la souris des fonctions du Digitakt II restant à développer.
+
+Overbridge, Outbox et la maintenance d'un appareil Elektron sont hors périmètre.
+Les samples sont ceux de l'utilisateur ; les traitements audio sont indépendants.

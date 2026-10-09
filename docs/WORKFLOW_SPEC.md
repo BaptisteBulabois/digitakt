@@ -176,3 +176,18 @@ Le premier lot de développement est la navigation de la section 1, avec les
 paramètres déjà fonctionnels et les fondations nécessaires aux modes. Les
 sections suivantes dépendent de ce socle ; elles ne constituent pas une promesse
 de reproduction complète en une seule livraison.
+
+## État du lot 0.2.0
+
+La navigation à huit commandes, les sous-pages et le panneau inspiré du SVG
+fourni sont implémentés. REC distingue l'édition GRID du jeu des pistes ; TRK
+sélectionne silencieusement. Les commandes FUNC et les actions explicites
+permettent copie/collage/effacement de pas, page et séquence de piste, annulation
+et sauvegarde/restauration temporaire.
+
+Les banques/patterns multiples, les modes LIVE/STEP, les locks généralisés,
+les machines avancées et les règles complètes du séquenceur restent à développer.
+La présentation des paramètres ne modifie pas leurs plages ou leur DSP legacy.
+Le STOP local conserve sa fonction de pause, avec les queues audio ; il n'offre
+pas encore la coupure/double STOP du matériel. Le
+[guide 0.2](WORKFLOW_0_2.md) décrit les gestes disponibles et les adaptations.

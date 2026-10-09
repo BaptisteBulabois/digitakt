@@ -45,6 +45,16 @@ signaler les informations qui ne peuvent pas être confirmées dans le texte.
 
 ## Analyses produites
 
+Une [référence vectorielle du panneau fournie par l'utilisateur](assets/digitakt2-user-panel.svg)
+complète les documents officiels pour la disposition : écran à gauche, matrice
+A–H à droite, navigation au centre et pads en deux rangées. Ce dessin reste
+approximatif ; les gestes, intitulés secondaires et capacités sont vérifiés
+dans le manuel. Ses annotations ne constituent pas des instructions à exécuter.
+L'interface du plugin conserve son identité Takt II.
+
+Empreinte SHA-256 du SVG reçu :
+`e1cea7fe67303a159b3b79334b00a7d4589f86dbefec944496fa7d3865a3e641`.
+
 - [Interface, navigation et données](UI_WORKFLOW_AUDIT.md).
 - [Séquenceur et édition](SEQUENCER_WORKFLOW_AUDIT.md).
 - [Historique firmware et régressions](FIRMWARE_AUDIT.md).
