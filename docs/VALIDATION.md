@@ -60,8 +60,14 @@ vérifie également :
 - Rendu hors ligne de quatre mesures, stéréo 48 kHz. Les trois identifiants de
   classe du VST3 restent identiques, avec version portée de 0.1.0 à 0.2.0.
 
-Le workflow Windows compile et exécute CTest, puis les scénarios GUI et le
-chargement du VST3 Windows avant de produire l'archive. Le résultat de son
-exécution est à vérifier dans GitHub Actions pour le commit livré. L'installation
-et le comportement de 0.2.0 dans Live nécessitent le retour de l'utilisateur ;
-les tests JUCE ne constituent pas un test automatisé d'Ableton Live.
+Le [run Windows 37888994853](https://github.com/BaptisteBulabois/digitakt/actions/runs/37888994853),
+pour le commit `fb5741d91d587bf5d304a7c86064809fcd759916`, a réussi : compilation
+x64 Release, CTest, scénarios GUI et chargement du VST3 Windows dans un host JUCE.
+Le conditionnement et l'envoi de l'[archive installable 0.2.0](https://github.com/BaptisteBulabois/digitakt/actions/runs/37888994853/artifacts/11598145486)
+ont également réussi. Elle contient le dossier complet `Takt II.vst3`, une capture
+du panneau et les instructions d'installation.
+
+L'installation et le comportement de 0.2.0 dans Live nécessitent le retour de
+l'utilisateur ; les tests JUCE ne constituent pas un test automatisé d'Ableton
+Live. Le test avec le véritable ancien module et la comparaison de rendu ont
+été exécutés sous Linux, comme décrit ci-dessus.
