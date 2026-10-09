@@ -8,6 +8,10 @@ Takt II est un instrument VST3 : il doit être chargé sur une piste MIDI.
 
 ## Méthode simple : télécharger le build GitHub
 
+Le [build Windows 0.3.0 validé](https://github.com/BaptisteBulabois/digitakt/actions/runs/37982391074/artifacts/11641331887)
+est disponible (connexion GitHub requise). Il contient le bundle complet,
+une capture du panneau et un fichier LISEZ-MOI.
+
 Les envois sur la branche `development/0.3-machines-modulation` lancent une
 compilation Windows indépendante de celle de `main`.
 
@@ -44,7 +48,8 @@ Si aucune exécution verte n'est encore affichée, utiliser la méthode de compi
 
 La version 0.3.0 conserve l'identité VST3 et les identifiants des paramètres de
 la première version. Le rappel des anciens projets Live reste pris en charge ;
-les nouvelles pages présentent les mêmes paramètres automatisables.
+les paramètres des nouvelles fonctions sont ajoutés après les paramètres
+historiques.
 
 ## Compiler soi-même
 

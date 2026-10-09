@@ -109,7 +109,7 @@ règles est explicite ; la probabilité avancée est évaluée par activation et
 renouvelée au redémarrage du transport.
 
 TRK avec un encodeur ouvre un geste Control All. Les valeurs évoluent à partir
-de celles mémorisées au début du geste ; NO annule, relâcher TRK valide. La
+de celles mémorisées au début du geste ; NO annule, recliquer sur TRK valide. La
 piste active est toujours incluse. Le choix d'un déplacement relatif est une
 adaptation logicielle : le manuel ne précise pas sa formule pour des pistes
 dont les valeurs initiales diffèrent.

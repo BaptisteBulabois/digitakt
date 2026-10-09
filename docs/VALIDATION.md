@@ -117,7 +117,17 @@ le rendu hors ligne de quatre mesures, stéréo 48 kHz, passe également.
 Le popup natif Slice Editor n'est pas automatisé dans la suite GUI ; les
 points, grilles et leur rappel sont vérifiés au niveau du processeur.
 
-La compilation Windows est lancée séparément sur la branche de développement.
+Le [run Windows 37982391074](https://github.com/BaptisteBulabois/digitakt/actions/runs/37982391074),
+pour le commit `661cb0266584f55e6fefc6b273d2d43c3a30c65d`, a réussi :
+compilation x64 Release, les cinq cibles CTest, scénarios GUI et chargement
+du véritable VST3 Windows dans un host JUCE avec rendu, automation et rappel.
+Le conditionnement et la publication de
+l'[archive installable 0.3.0 de développement](https://github.com/BaptisteBulabois/digitakt/actions/runs/37982391074/artifacts/11641331887)
+ont également réussi. Le code et ce build sont sur la branche de développement ;
+`main` reste au commit `185ad20abe5d249894417df6b9785222da0b2a73` (0.2.0).
+L'archive publiée a été téléchargée et inspectée : bundle complet, binaire
+PE AMD64, manifeste 0.3.0, capture Windows et LISEZ-MOI présents.
+
 Ces résultats ne constituent pas un essai de 0.3 dans Ableton Live ni une
 comparaison du DSP avec le matériel. Les limites de workflow restent dans le
 [guide 0.3](WORKFLOW_0_3.md).
