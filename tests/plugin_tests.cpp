@@ -2475,6 +2475,7 @@ void testPanelGestures()
     auto& scope = component<juce::ComboBox>(*editor, "edit-scope");
     check(scope.isVisible(), "VST tools did not expose editing scope");
     scope.setSelectedId(2, juce::sendNotificationSync);
+    click(*editor, "navigation-no"); // Hardware shortcuts are exposed after closing the utility drawer.
     const auto beforePagePaste = patternOf(processor);
     chord("edit-grid");
     click(*editor, "seq-page-7");
@@ -2810,6 +2811,95 @@ void testEditorKeyboard()
     passed("Windows CTRL+C/V/Z key codes work without text characters and bypass text input events");
 }
 
+void checkEditorGeometry(juce::AudioProcessorEditor& editor, const juce::String& context)
+{
+    std::vector<juce::Component*> controls;
+    auto* hardwareSurface = findComponent(editor, "hardware-surface");
+    check(hardwareSurface != nullptr, "Editor has no hardware surface geometry");
+    const auto hardwareBounds = editor.getLocalArea(hardwareSurface, hardwareSurface->getLocalBounds().toFloat());
+    std::set<juce::String> footerControls{
+        "sample-import", "sample-audition", "transport-host", "view-step-tools",
+        "view-send-fx", "edit-undo", "vst-tools", "navigation-help"
+    };
+    for (int track = 1; track <= takt::numTracks; ++track)
+        footerControls.insert("track-" + juce::String(track));
+    const auto description = [](const juce::Component& target)
+    {
+        return (target.getComponentID().isNotEmpty() ? target.getComponentID()
+                                                   : target.getName()).toStdString();
+    };
+    const auto inspect = [&](auto&& self, juce::Component& parent, bool insideControl) -> void
+    {
+        // JUCE manages clipping and scrolling inside each text editor. Its
+        // content holder is intentionally larger than its visible viewport.
+        if (dynamic_cast<juce::TextEditor*>(&parent) != nullptr) return;
+        for (int index = 0; index < parent.getNumChildComponents(); ++index)
+        {
+            auto& child = *parent.getChildComponent(index);
+            if (!child.isVisible()) continue;
+            // Scrollable text contents may intentionally exceed their clipped
+            // viewport; their enclosing editor must fit like every control.
+            if (auto* viewport = dynamic_cast<juce::Viewport*>(&parent);
+                viewport != nullptr && viewport->getViewedComponent() == &child) continue;
+            const auto inParent = parent.getLocalArea(&child, child.getLocalBounds().toFloat());
+            check(parent.getLocalBounds().toFloat().expanded(.5f).contains(inParent),
+                  context.toStdString() + ": visible component exceeds its parent: "
+                      + description(child));
+            const bool control = dynamic_cast<juce::Button*>(&child) != nullptr
+                              || dynamic_cast<juce::Slider*>(&child) != nullptr
+                              || dynamic_cast<juce::ComboBox*>(&child) != nullptr
+                              || dynamic_cast<juce::TextEditor*>(&child) != nullptr;
+            if (control && !insideControl)
+            {
+                check(child.getWidth() > 0 && child.getHeight() > 0,
+                      context.toStdString() + ": visible control has no hit area: " + description(child));
+                controls.push_back(&child);
+            }
+            // Inspect containment for widget internals too, but a slider's
+            // text editor is not a competing interactive hit area.
+            self(self, child, insideControl || control);
+        }
+    };
+    inspect(inspect, editor, false);
+    check(!controls.empty(), "Editor has no visible controls in " + context.toStdString());
+    for (std::size_t index = 0; index < controls.size(); ++index)
+    {
+        auto& target = *controls[index];
+        const auto area = editor.getLocalArea(&target, target.getLocalBounds().toFloat());
+        check(editor.getLocalBounds().toFloat().expanded(.5f).contains(area),
+              context.toStdString() + ": visible control exceeds editor: " + description(target));
+        if (footerControls.count(target.getComponentID()) == 0)
+            check(hardwareBounds.expanded(.5f).contains(area),
+                  context.toStdString() + ": body control exceeds the hardware panel: " + description(target));
+        const auto centre = editor.getLocalPoint(&target, target.getLocalBounds().toFloat().getCentre());
+        auto* hit = editor.getComponentAt(centre);
+        check(hit == &target || (hit != nullptr && target.isParentOf(hit)),
+              context.toStdString() + ": control is covered at its hit centre: "
+                  + description(target) + " by " + (hit != nullptr ? description(*hit) : "nothing"));
+        for (std::size_t other = index + 1; other < controls.size(); ++other)
+        {
+            const auto otherArea = editor.getLocalArea(controls[other], controls[other]->getLocalBounds().toFloat());
+            const auto overlap = area.getIntersection(otherArea);
+            check(overlap.getWidth() <= .25f || overlap.getHeight() <= .25f,
+                  context.toStdString() + ": interactive controls overlap: " + description(target)
+                      + " / " + description(*controls[other]));
+        }
+    }
+}
+
+void writeEditorSnapshot(juce::AudioProcessorEditor& editor, const juce::File& png)
+{
+    const auto image = editor.createComponentSnapshot(editor.getLocalBounds(), true);
+    check(image.isValid() && image.getWidth() == editor.getWidth()
+              && image.getHeight() == editor.getHeight(), "Editor snapshot failed");
+    check(png.getParentDirectory().createDirectory().wasOk(), "Cannot create screenshot directory");
+    check(!png.exists() || png.deleteFile(), "Cannot replace screenshot");
+    auto stream = png.createOutputStream();
+    check(stream != nullptr, "Cannot open screenshot file");
+    juce::PNGImageFormat encoder;
+    check(encoder.writeImageToStream(image, *stream), "Cannot encode editor PNG");
+}
+
 void testGui(const juce::File& png)
 {
     auto processorStorage = std::make_unique<TaktAudioProcessor>();
@@ -2818,21 +2908,99 @@ void testGui(const juce::File& png)
     std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
     check(editor != nullptr && editor->getWidth() > 600 && editor->getHeight() > 300,
           "Editor could not be created at a usable size");
+    editor->setVisible(true); // Enable JUCE's actual hit-testing without opening a native window.
+    const auto initialSize = editor->getBounds().withPosition(0, 0);
+    const auto* constrainer = editor->getConstrainer();
+    check(constrainer != nullptr, "Resizable editor has no bounds constrainer");
+    const std::array<juce::Rectangle<int>, 3> sizes{{
+        {0, 0, constrainer->getMinimumWidth(), constrainer->getMinimumHeight()},
+        initialSize,
+        {0, 0, constrainer->getMaximumWidth(), constrainer->getMaximumHeight()}
+    }};
+    const auto sibling = [&](const juce::String& suffix)
+    {
+        return png.getSiblingFile(png.getFileNameWithoutExtension() + "-" + suffix + ".png");
+    };
+    const auto inspectPage = [&](const juce::String& page)
+    {
+        const auto beforeResize = stateOf(processor);
+        for (const auto size : sizes)
+        {
+            editor->setSize(size.getWidth(), size.getHeight());
+            checkEditorGeometry(*editor, page + " " + juce::String(size.getWidth())
+                                                + "x" + juce::String(size.getHeight()));
+        }
+        editor->setSize(initialSize.getWidth(), initialSize.getHeight());
+        check(stateOf(processor) == beforeResize, "Resizing the editor changed the musical project");
+    };
+    inspectPage("SRC");
+    writeEditorSnapshot(*editor, png);
+    editor->setSize(sizes.front().getWidth(), sizes.front().getHeight());
+    writeEditorSnapshot(*editor, sibling("min"));
+    editor->setSize(sizes.back().getWidth(), sizes.back().getHeight());
+    writeEditorSnapshot(*editor, sibling("max"));
+    editor->setSize(initialSize.getWidth(), initialSize.getHeight());
     const auto image = editor->createComponentSnapshot(editor->getLocalBounds(), true);
-    check(image.isValid() && image.getWidth() == editor->getWidth(), "Editor snapshot failed");
     std::set<juce::uint32> colours;
     for (int y = 0; y < image.getHeight(); y += 7)
         for (int x = 0; x < image.getWidth(); x += 7)
             colours.insert(image.getPixelAt(x, y).getARGB());
     check(colours.size() > 16, "Editor rendered an empty or uniform image");
-    check(png.getParentDirectory().createDirectory().wasOk(), "Cannot create screenshot directory");
-    check(!png.exists() || png.deleteFile(), "Cannot replace screenshot");
-    auto stream = png.createOutputStream();
-    check(stream != nullptr, "Cannot open screenshot file");
-    juce::PNGImageFormat encoder;
-    check(encoder.writeImageToStream(image, *stream), "Cannot encode editor PNG");
+    click(*editor, "family-src");
+    inspectPage("SRC waveform");
+    writeEditorSnapshot(*editor, sibling("src-wave"));
+    click(*editor, "family-trig");
+    inspectPage("TRIG");
+    click(*editor, "param-page-next");
+    inspectPage("TRIG retriggers");
+    processor.setParameter("t1_filterMachine", 3);
+    click(*editor, "family-fltr");
+    inspectPage("FLTR EQ");
+    click(*editor, "param-page-next");
+    inspectPage("FLTR base width");
+    processor.setParameter("t1_ampMode", 2);
+    click(*editor, "family-amp");
+    inspectPage("AMP ADSR");
+    click(*editor, "family-fx");
+    inspectPage("Track FX");
+    click(*editor, "family-mod");
+    for (int lfo = 1; lfo <= 3; ++lfo)
+    {
+        inspectPage("MOD LFO " + juce::String(lfo));
+        if (lfo < 3) click(*editor, "param-page-next");
+    }
+    writeEditorSnapshot(*editor, sibling("mod"));
+    click(*editor, "view-step-tools");
+    inspectPage("Step tools");
+    click(*editor, "view-send-fx");
+    for (const auto* page : {"Delay", "Reverb", "Chorus"})
+    {
+        inspectPage(page);
+        click(*editor, "param-page-next");
+    }
+    click(*editor, "family-src");
+    click(*editor, "unavailable-ptn");
+    click(*editor, "pattern-bank-H");
+    inspectPage("Patterns");
+    writeEditorSnapshot(*editor, sibling("patterns"));
+    click(*editor, "arrangement-back");
+    click(*editor, "unavailable-song");
+    click(*editor, "song-add-row");
+    inspectPage("Song");
+    writeEditorSnapshot(*editor, sibling("song"));
+    click(*editor, "arrangement-back");
+    click(*editor, "vst-tools");
+    inspectPage("VST tools");
+    writeEditorSnapshot(*editor, sibling("tools"));
+    click(*editor, "navigation-no");
+    inspectPage("VST tools closed");
+    click(*editor, "navigation-help");
+    inspectPage("Help");
+    writeEditorSnapshot(*editor, sibling("help"));
+    click(*editor, "navigation-help");
+    inspectPage("Help closed");
     editor.reset();
-    passed("GUI editor creation and rendered PNG screenshot");
+    passed("GUI pages fit at minimum/default/maximum sizes; controls do not overlap and remain reachable; PNG gallery rendered");
     std::cout << "PNG: " << png.getFullPathName() << std::endl;
 }
 

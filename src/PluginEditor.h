@@ -104,6 +104,7 @@ private:
     TaktAudioProcessor& processor;
     std::unique_ptr<HardwareLookAndFeel> skin;
     std::unique_ptr<Panel> panel;
+    juce::Component hardwareSurface;
     std::unique_ptr<Waveform> waveform;
     juce::TooltipWindow tooltips;
     std::array<std::unique_ptr<TrackPad>, takt::numTracks> trackPads;

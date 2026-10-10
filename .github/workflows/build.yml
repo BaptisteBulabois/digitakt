@@ -19,16 +19,18 @@ jobs:
       - name: Verify Windows VST3 and editor
         shell: pwsh
         run: |
-          & ".\build\TaktTests_artefacts\Release\TaktTests.exe" --gui "build/editor-0.3.1.png" --host "build/TaktII_artefacts/Release/VST3/Takt II.vst3"
+          & ".\build\TaktTests_artefacts\Release\TaktTests.exe" --gui "build/editor-0.3.2.png" --host "build/TaktII_artefacts/Release/VST3/Takt II.vst3"
           if ($LASTEXITCODE -ne 0) { throw "Windows VST3/editor validation failed" }
       - name: Stage installable bundle
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist/windows -Force | Out-Null
           Copy-Item -LiteralPath "build/TaktII_artefacts/Release/VST3/Takt II.vst3" -Destination dist/windows -Recurse
-          Copy-Item -LiteralPath "build/editor-0.3.1.png" -Destination dist/windows/PREVIEW.png
+          Copy-Item -LiteralPath "build/editor-0.3.2.png" -Destination dist/windows/PREVIEW.png
+          New-Item -ItemType Directory -Path dist/windows/SCREENSHOTS -Force | Out-Null
+          Copy-Item -Path "build/editor-0.3.2-*.png" -Destination dist/windows/SCREENSHOTS
           @'
-          Takt II 0.3.1 - version de developpement - Windows x64 / Ableton Live
+          Takt II 0.3.2 - version de developpement - Windows x64 / Ableton Live
 
           La version stable 0.2.0 reste sur main.
           La compatibilite avec les anciennes versions n'est plus une exigence.
@@ -44,6 +46,6 @@ jobs:
       - name: Upload VST3 bundle
         uses: actions/upload-artifact@v4
         with:
-          name: Takt-II-Windows-VST3-0.3.1-development
+          name: Takt-II-Windows-VST3-0.3.2-development
           path: dist/windows/
           if-no-files-found: error

@@ -1,9 +1,16 @@
-# Takt II 0.3.1 — branche de développement
+# Takt II 0.3.2 — branche de développement
 
 Cette branche conserve `main` et la version stable 0.2.0. Elle étend le panneau
 fourni par l'utilisateur et les workflows décrits dans le manuel Digitakt II
 OS 1.17. La validation de cette branche est consignée dans [VALIDATION.md](VALIDATION.md).
 Les algorithmes audio restent des implémentations indépendantes.
+
+L'interface 0.3.2 suit le panneau officiel : noms et valeurs dans l'écran,
+lettres A–H près des codeurs et voyants de page en deux rangées au-dessus
+de PAGE. Glisser un codeur pour régler sa valeur ; celle-ci apparaît aussi
+au survol. Les outils conservent leurs champs numériques. Les panneaux
+d'outils et d'arrangement masquent les commandes qu'ils recouvrent ; NO
+les ferme. Les détails sont dans [UI_REWORK_0_3_2.md](UI_REWORK_0_3_2.md).
 
 ## Préserver l'installation stable
 

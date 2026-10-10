@@ -198,3 +198,29 @@ a été téléchargée et inspectée : bundle complet, binaire PE AMD64, manifes
 0.3.1, identité VST3 conservée, capture Windows 900 × 780 et LISEZ-MOI présents.
 Cette validation utilise un host de test JUCE ; elle ne constitue pas un essai
 de la 0.3.1 dans Ableton Live.
+
+## Interface de développement 0.3.2
+
+Le 10 octobre 2026, `bash scripts/build.sh` réussit sous Linux ; les six
+cibles CTest passent. La vérification du bundle VST3 réel, de l'automation,
+du rappel et du rendu audio passe également. Le moteur audio n'est pas
+modifié dans cette révision visuelle.
+
+La suite GUI vérifie les vues SRC et waveform, TRIG/retriggers, FLTR EQ et
+BASE/WIDTH, AMP ADSR, FX, les trois LFO, Step Tools, Delay/Reverb/Chorus,
+Patterns, Song, VST Tools et Help. Chaque vue est vérifiée aux tailles
+720 × 624, 900 × 780 et 1350 × 1170 :
+
+- les composants visibles restent dans leur parent et dans la fenêtre ;
+- les commandes du panneau restent dans le boîtier visible, en dehors des
+  commandes VST placées volontairement sous celui-ci ;
+- les surfaces des contrôles ne se chevauchent pas ;
+- un hit-test réel au centre de chaque commande atteint celle-ci ou son
+  contenu, y compris après ouverture et fermeture des panneaux superposés ;
+- le redimensionnement ne modifie pas l'état musical sauvegardé.
+
+Une galerie PNG couvre l'interface par défaut, les tailles minimale/maximale,
+la waveform, MOD, Patterns, Song, les outils et l'aide. La capture 0.3.2
+du README provient du rendu actuel de l'éditeur. La comparaison avec le
+dessin officiel et les adaptations sont décrites dans
+[UI_REWORK_0_3_2.md](UI_REWORK_0_3_2.md).

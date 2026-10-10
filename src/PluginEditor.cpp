@@ -6,9 +6,9 @@
 namespace
 {
 constexpr int designWidth = 900, designHeight = 780;
-const juce::Colour background{0xff101317}, panelColour{0xff191e24};
-const juce::Colour inset{0xff11161b}, border{0xff303943};
-const juce::Colour ink{0xffe8e9e2}, mutedInk{0xff8d9aa5}, accent{0xffefb34d};
+const juce::Colour background{0xff111214}, panelColour{0xff252628};
+const juce::Colour inset{0xff151618}, border{0xff36383b};
+const juce::Colour ink{0xffe6e5df}, mutedInk{0xff90918f}, accent{0xffedb43f};
 const juce::Colour trigRed{0xffed514d};
 juce::Font font(float size, bool bold = false)
 {
@@ -88,20 +88,98 @@ public:
         setColour(juce::TooltipWindow::textColourId, ink);
         setColour(juce::TooltipWindow::outlineColourId, border);
     }
-    juce::Font getLabelFont(juce::Label&) override { return font(12.0f); }
+    juce::Font getLabelFont(juce::Label& label) override { return label.getFont(); }
     juce::Font getTextButtonFont(juce::TextButton& button, int) override
-    { return font(button.getComponentID().startsWith("panel-menu-") ? 8.0f : 11.0f, true); }
+    { return font(button.getComponentID().startsWith("panel-menu-") ? 8.0f : 10.0f); }
     void drawButtonBackground(juce::Graphics& g, juce::Button& button, const juce::Colour& colour,
                               bool over, bool down) override
     {
         auto r = button.getLocalBounds().toFloat().reduced(0.5f);
+        if (button.getComponentID().startsWith("seq-page-"))
+        {
+            g.setColour(button.getToggleState() ? trigRed : juce::Colour(0xff302424));
+            g.fillEllipse(r.reduced(2));
+            g.setColour(over ? ink : juce::Colour(0xff18191a));
+            g.drawEllipse(r.reduced(2), 1.0f);
+            return;
+        }
         auto fill = button.getToggleState() ? accent : colour;
+        if (button.getComponentID().startsWith("family-"))
+            fill = button.getToggleState() ? juce::Colour(0xffb94529) : colour;
+        if (button.getComponentID() == "edit-grid" && button.getToggleState())
+            fill = juce::Colour(0xff793128);
+        if (button.getComponentID() == "transport-play" && button.getToggleState())
+            fill = juce::Colour(0xff244535);
         if (over) fill = fill.brighter(0.12f);
         if (down) fill = fill.darker(0.12f);
         g.setColour(fill);
         g.fillRoundedRectangle(r, 4.0f);
-        g.setColour(button.getToggleState() ? accent.brighter(0.2f) : border.brighter(0.12f));
+        g.setColour(button.getToggleState() ? fill.brighter(0.2f) : border.brighter(0.12f));
         g.drawRoundedRectangle(r, 4.0f, 1.0f);
+    }
+    void drawButtonText(juce::Graphics& g, juce::TextButton& button, bool over, bool down) override
+    {
+        const auto id = button.getComponentID();
+        if (id.startsWith("seq-page-")) return;
+        const auto r = button.getLocalBounds().toFloat();
+        const auto cx = r.getCentreX(), cy = r.getCentreY();
+        if (id.startsWith("panel-menu-") || id == "unavailable-keyboard")
+        {
+            g.setColour(button.isEnabled() ? ink : mutedInk);
+            if (id == "panel-menu-0")
+            {
+                for (int line = 0; line < 3; ++line) g.drawLine(cx - 9, cy - 6 + line * 5, cx + 5, cy - 6 + line * 5, 1.5f);
+                g.drawLine(cx + 9, cy - 9, cx + 9, cy + 5, 1.5f);
+                g.fillEllipse(cx + 4, cy + 3, 6.0f, 4.0f);
+            }
+            else if (id == "panel-menu-1")
+            {
+                g.drawEllipse(cx - 6, cy - 6, 12, 12, 2);
+                g.drawEllipse(cx - 2, cy - 2, 4, 4, 1);
+                for (int tooth = 0; tooth < 8; ++tooth)
+                {
+                    const float angle = tooth * juce::MathConstants<float>::pi / 4;
+                    g.drawLine(cx + std::sin(angle) * 7, cy + std::cos(angle) * 7,
+                               cx + std::sin(angle) * 10, cy + std::cos(angle) * 10, 2);
+                }
+            }
+            else if (id == "panel-menu-2")
+            {
+                for (int i = -2; i <= 2; ++i)
+                {
+                    const float height = i == 0 ? 10.0f : std::abs(i) == 1 ? 6.0f : 3.0f;
+                    g.drawLine(cx + i * 4, cy - height, cx + i * 4, cy + height, 2);
+                }
+            }
+            else if (id == "panel-menu-3")
+            {
+                g.drawEllipse(cx - 9, cy - 9, 18, 18, 1.5f);
+                g.drawLine(cx, cy, cx, cy - 6, 1.5f); g.drawLine(cx, cy, cx + 5, cy + 2, 1.5f);
+            }
+            else
+            {
+                g.drawRect(cx - 14, cy - 8, 28.0f, 16.0f, 1.5f);
+                for (int key = 1; key < 5; ++key) g.drawLine(cx - 14 + key * 5.6f, cy - 8, cx - 14 + key * 5.6f, cy + 8, 1);
+                for (int key : {1, 2, 4}) g.fillRect(cx - 16 + key * 5.6f, cy - 8, 4.0f, 9.0f);
+            }
+            return;
+        }
+        if (id == "edit-grid" || id == "transport-play" || id == "transport-stop")
+        {
+            g.setColour(id == "edit-grid" ? (button.getToggleState() ? trigRed.brighter(.35f) : ink)
+                        : id == "transport-play" && button.getToggleState() ? juce::Colour(0xff76c997) : ink);
+            if (id == "edit-grid") g.fillEllipse(cx - 7, cy - 7, 14, 14);
+            else if (id == "transport-stop") g.fillRect(cx - 6, cy - 6, 12.0f, 12.0f);
+            else { juce::Path p; p.addTriangle(cx - 5, cy - 8, cx - 5, cy + 8, cx + 8, cy); g.fillPath(p); }
+            return;
+        }
+        if (id.startsWith("family-"))
+        {
+            g.setColour(ink); g.setFont(font(9));
+            g.drawFittedText(button.getButtonText(), button.getLocalBounds().reduced(3), juce::Justification::centred, 1);
+            return;
+        }
+        juce::LookAndFeel_V4::drawButtonText(g, button, over, down);
     }
     void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
                           float position, float startAngle, float endAngle, juce::Slider& slider) override
@@ -112,8 +190,8 @@ public:
         const auto cx = bounds.getCentreX(), cy = bounds.getCentreY();
         g.setColour(juce::Colour(0xff080b0e));
         g.fillEllipse(cx - radius + 2, cy - radius + 4, radius * 2, radius * 2);
-        g.setGradientFill(juce::ColourGradient(juce::Colour(0xff43494f), cx, cy - radius,
-                                             juce::Colour(0xff252a2f), cx, cy + radius, false));
+        g.setGradientFill(juce::ColourGradient(juce::Colour(0xff303236), cx, cy - radius,
+                                             juce::Colour(0xff1a1b1e), cx, cy + radius, false));
         g.fillEllipse(cx - radius, cy - radius, radius * 2, radius * 2);
         g.setColour(juce::Colour(0xff151a1e));
         for (int rib = 0; rib < 32; ++rib)
@@ -122,7 +200,7 @@ public:
             g.drawLine(cx + std::sin(a) * (radius - 4), cy - std::cos(a) * (radius - 4),
                        cx + std::sin(a) * (radius - 1), cy - std::cos(a) * (radius - 1), 1.1f);
         }
-        g.setColour(juce::Colour(0xff343a40));
+        g.setColour(juce::Colour(0xff27292c));
         g.fillEllipse(cx - radius + 6, cy - radius + 6, (radius - 6) * 2, (radius - 6) * 2);
         const auto angle = startAngle + position * (endAngle - startAngle);
         const auto inner = radius * 0.35f, outer = radius * 0.65f;
@@ -160,8 +238,23 @@ public:
     }
     void resized() override
     {
+        if (hardware)
+        {
+            label.setVisible(false);
+            slider.setBounds(getLocalBounds());
+            return;
+        }
         label.setBounds(0, 0, getWidth(), 16);
+        slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, juce::jmax(1, getWidth() - 8), 19);
         slider.setBounds(0, 16, getWidth(), getHeight() - 16);
+    }
+    void setHardware(bool enabled)
+    {
+        hardware = enabled;
+        label.setVisible(!enabled);
+        if (enabled) slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+        slider.setPopupDisplayEnabled(enabled, enabled, getParentComponent());
+        resized();
     }
     void present(const juce::String& name, bool available, const juce::String& tip)
     {
@@ -175,6 +268,7 @@ public:
     juce::Slider slider;
 private:
     juce::Label label;
+    bool hardware = false;
 };
 
 class TaktAudioProcessorEditor::TrackPad final : public juce::Button
@@ -216,12 +310,12 @@ public:
     {
         auto r = getLocalBounds().toFloat().reduced(1.0f);
         const auto lit = lockOnly ? accent : trigRed;
-        g.setColour(juce::Colour(0xff080b0e)); g.fillRoundedRectangle(r, 9.0f);
+        g.setColour(juce::Colour(0xff090a0b)); g.fillRoundedRectangle(r, 6.0f);
         r = r.reduced(3.0f);
         g.setColour(enabled ? lit.withAlpha(over || down ? 0.48f : 0.20f) : (over ? border : juce::Colour(0xff252b31)));
-        g.fillRoundedRectangle(r, 7.0f);
+        g.fillRoundedRectangle(r, 4.0f);
         g.setColour(selected ? ink.withAlpha(0.8f) : border);
-        g.drawRoundedRectangle(r, 7.0f, selected ? 1.5f : 1.0f);
+        g.drawRoundedRectangle(r, 4.0f, selected ? 1.5f : 1.0f);
         drawCaption(g, number(index % 16 + 1), {0, 13, getWidth(), 27}, 22.0f,
              withinLength ? (playing ? accent : enabled ? lit : ink) : mutedInk.darker(), true, juce::Justification::centred);
         if (hasLock && grid) drawCaption(g, "LOCK", {0, 43, getWidth(), 12}, 8.0f, accent, true, juce::Justification::centred);
@@ -379,9 +473,13 @@ TaktAudioProcessorEditor::TaktAudioProcessorEditor(TaktAudioProcessor& p)
     addKeyListener(this);
     addAndMakeVisible(*panel);
     panel->setSize(designWidth, designHeight);
-    drawerBackdrop.setColour(juce::Label::backgroundColourId, juce::Colour(0xff151a20));
+    hardwareSurface.setComponentID("hardware-surface");
+    hardwareSurface.setBounds(32, 16, 836, 684);
+    hardwareSurface.setInterceptsMouseClicks(false, false);
+    panel->addAndMakeVisible(hardwareSurface);
+    drawerBackdrop.setColour(juce::Label::backgroundColourId, juce::Colours::transparentBlack);
     drawerBackdrop.setColour(juce::Label::outlineColourId, border);
-    drawerBackdrop.setOpaque(true); drawerBackdrop.setInterceptsMouseClicks(true, true);
+    drawerBackdrop.setOpaque(false); drawerBackdrop.setInterceptsMouseClicks(true, true);
     panel->addAndMakeVisible(drawerBackdrop);
     panel->addAndMakeVisible(*waveform);
     waveform->setComponentID("sample-waveform");
@@ -424,7 +522,7 @@ TaktAudioProcessorEditor::TaktAudioProcessorEditor(TaktAudioProcessor& p)
     sourceImportButton.onClick = [this] { if (processor.isSampleImportPending(selectedTrack)) cancelSelectedImport(); else chooseSample(); };
     addButton(fillButton, true, "sequencer-fill", "Latch FILL mode. Trigs set to FILL ON/OFF follow this musical condition; independent of the host transport.");
     fillButton.onClick = [this] { processor.setParameter("fill", fillButton.getToggleState() ? 1.0f : 0.0f); };
-    addButton(pageButton, false, "sequencer-page-next", "Cycle the eight sequencer pages. LEDs below are clickable for direct page selection.");
+    addButton(pageButton, false, "sequencer-page-next", "Cycle the eight sequencer pages. LEDs above are clickable for direct page selection.");
     addButton(toolsButton, true, "vst-tools", "Open software utilities: tempo, swing, length, clipboard scope, demo and selected-track controls.");
     addButton(leftButton, false, "navigation-left", "Previous sequencer page.");
     addButton(rightButton, false, "navigation-right", "Next sequencer page.");
@@ -614,7 +712,9 @@ TaktAudioProcessorEditor::TaktAudioProcessorEditor(TaktAudioProcessor& p)
     sampleLabel.setColour(juce::Label::textColourId, ink);
     helpLabel.setText("MOUSE\nTRK then a pad: select a track silently. The VST strip also selects tracks.\nREC on: pads edit steps; right-click selects without toggling.\nREC off: pads play tracks; right-click selects silently.\nClick a family again or Up/Down to switch its subpage.\n\nFUNC (latched for one command)\nREC: copy  /  PLAY: clear  /  STOP: paste\nYES: temporary save  /  NO: temporary reload  /  FX: send effects\nClipboard scope is selected in VST TOOLS. Repeat paste/clear to undo.\n\nKEYBOARD (editor focused)\n1-8 / Q W E R T Y U I: pads; Shift selects without toggling.\nLeft/Right: sequence page.  [ / ] or Up/Down: parameter subpage.\nSpace: internal play/pause. Ctrl+C / V / Z: copy / paste / undo.\nDelete: clear scope. Escape: back. Shortcuts pause while typing.\n\n* marks an adapted control. Disabled controls are not implemented.\nIn HOST SYNC use Live's transport. STOP pauses without rewinding.", juce::dontSendNotification);
     helpLabel.setJustificationType(juce::Justification::topLeft);
-    helpLabel.setColour(juce::Label::backgroundColourId, panelColour);
+    helpLabel.setFont(font(12));
+    helpLabel.setColour(juce::Label::textColourId, ink);
+    helpLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xff1b1c1e));
     helpLabel.setOpaque(true); helpLabel.setInterceptsMouseClicks(true, true); helpLabel.setVisible(false);
     previousPageButton.onClick = [this] { changeParameterPage(-1); };
     nextPageButton.onClick = [this] { changeParameterPage(1); };
@@ -695,160 +795,211 @@ void TaktAudioProcessorEditor::resized()
 
 void TaktAudioProcessorEditor::layoutPanel()
 {
-    // Compact software panel, preserving the supplied front-panel hierarchy.
-    transportDials[2]->present("", true, "Main output volume. Preserved master automation; unlike track LEVEL, affects the entire instrument.");
-    transportDials[2]->setBounds(66, 81, 94, 88);
+    // Front-panel ratios follow the official OS 1.17 manual, section 3.1.
+    transportDials[2]->present("", true, "Main output volume. Drag to adjust; the value appears on hover.");
+    transportDials[2]->setHardware(true);
+    transportDials[2]->setBounds(68, 111, 64, 64);
     trackLevel->present("", true, "Selected-track LEVEL. Distinct from SRC LEV and AMP VOL.");
-    trackLevel->setBounds(66, 188, 94, 88);
+    trackLevel->setHardware(true);
+    trackLevel->setBounds(68, 208, 64, 64);
     for (int i = 0; i < 8; ++i)
-        encoders[static_cast<std::size_t>(i)]->setBounds(459 + (i % 4) * 104, 77 + (i / 4) * 107, 89, 97);
-    sourceImportButton.setBounds(778, 154, 82, 20);
+    {
+        auto& dial = *encoders[static_cast<std::size_t>(i)];
+        dial.setHardware(true);
+        dial.setBounds(460 + (i % 4) * 102, 110 + (i / 4) * 98, 64, 64);
+    }
+    sourceImportButton.setBounds(339, 273, 88, 20);
     for (int i = 0; i < 6; ++i)
-        familyButtons[static_cast<std::size_t>(i)].setBounds(460 + i * 63, 308, 54, 35);
-    funcButton.setBounds(77, 311, 71, 38);
-    unavailableButtons[0].setBounds(78, 380, 70, 38);
-    trkButton.setBounds(78, 448, 70, 38);
-    unavailableButtons[1].setBounds(78, 524, 70, 38);
-    unavailableButtons[2].setBounds(78, 601, 70, 38);
-    gridButton.setBounds(179, 411, 60, 36);
-    for (int i = 0; i < 4; ++i) centreButtons[static_cast<std::size_t>(i)].setBounds(179 + i * 69, 363, 54, 31);
-    runButton.setBounds(249, 411, 60, 36);
-    stopButton.setBounds(319, 411, 60, 36);
-    yesButton.setBounds(459, 367, 53, 42);
-    noButton.setBounds(459, 429, 53, 42);
-    previousPageButton.setBounds(578, 362, 42, 33);
-    leftButton.setBounds(528, 402, 42, 33);
-    nextPageButton.setBounds(578, 402, 42, 33);
-    rightButton.setBounds(628, 402, 42, 33);
-    pageButton.setBounds(769, 385, 60, 36);
+        familyButtons[static_cast<std::size_t>(i)].setBounds(464 + i * 62, 307, 47, 42);
+    funcButton.setBounds(76, 348, 66, 42);
+    unavailableButtons[0].setBounds(76, 410, 66, 42);
+    trkButton.setBounds(76, 478, 66, 42);
+    unavailableButtons[1].setBounds(76, 544, 66, 42);
+    unavailableButtons[2].setBounds(76, 610, 66, 42);
+    for (int i = 0; i < 4; ++i)
+        centreButtons[static_cast<std::size_t>(i)].setBounds(179 + i * 64, 348, 48, 42);
+    gridButton.setBounds(179, 410, 60, 42);
+    runButton.setBounds(260, 410, 60, 42);
+    stopButton.setBounds(341, 410, 60, 42);
+    yesButton.setBounds(464, 378, 48, 42);
+    noButton.setBounds(464, 443, 48, 42);
+    previousPageButton.setBounds(589, 378, 46, 42);
+    leftButton.setBounds(529, 443, 46, 42);
+    nextPageButton.setBounds(589, 443, 46, 42);
+    rightButton.setBounds(649, 443, 46, 42);
+    pageButton.setBounds(746, 443, 87, 42);
     for (int i = 0; i < 8; ++i)
-        pageButtons[static_cast<std::size_t>(i)].setBounds(673 + i * 20, 436, 17, 19);
+        pageButtons[static_cast<std::size_t>(i)].setBounds(750 + (i % 4) * 21, 381 + (i / 4) * 21, 15, 15);
     for (int i = 0; i < 16; ++i)
-        stepPads[static_cast<std::size_t>(i)]->setBounds(182 + (i % 8) * 81, 505 + (i / 8) * 83, 66, 65);
-    sampleLabel.setBounds(177, 251, 249, 20);
-    sampleInfoLabel.setBounds(177, 273, 249, 16);
-    waveform->setBounds(177, 158, 249, 80);
-    helpLabel.setBounds(165, 304, 673, 350);
-    drawerBackdrop.setBounds(163, 304, 681, 178);
+        stepPads[static_cast<std::size_t>(i)]->setBounds(176 + (i % 8) * 83, 506 + (i / 8) * 89, 70, 70);
+    waveform->setBounds(180, 158, 240, 71);
+    sampleLabel.setBounds(178, 234, 242, 15);
+    sampleInfoLabel.setBounds(178, 234, 242, 15);
+    helpLabel.setBounds(164, 307, 680, 370);
+    drawerBackdrop.setBounds(164, 307, 680, 188);
     drawerBackdrop.setVisible(false);
-    transportDials[0]->setBounds(178, 316, 83, 84);
-    transportDials[1]->setBounds(265, 316, 83, 84);
-    patternLength.setBounds(355, 353, 151, 23);
-    editScope.setBounds(520, 349, 158, 26);
-    trackSpeed.setBounds(684, 349, 82, 26); fillButton.setBounds(774, 349, 54, 26);
-    copyButton.setBounds(522, 390, 87, 27);
-    pasteButton.setBounds(617, 390, 87, 27);
-    clearButton.setBounds(712, 390, 116, 27);
-    temporarySaveButton.setBounds(178, 432, 122, 28);
-    temporaryReloadButton.setBounds(308, 432, 130, 28);
-    muteButton.setBounds(448, 432, 73, 28);
-    reverseButton.setBounds(529, 432, 83, 28);
-    loopButton.setBounds(620, 432, 73, 28);
-    demoButton.setBounds(703, 432, 125, 28);
-    for (int i = 0; i < 8; ++i) bankButtons[static_cast<std::size_t>(i)].setBounds(179 + i * 81, 315, 68, 28);
-    arrangementLabel.setBounds(177, 350, 650, 23);
-    chainText.setBounds(178, 380, 397, 28); chainAppendButton.setBounds(585, 380, 116, 28); chainApplyButton.setBounds(710, 380, 116, 28);
-    performKitButton.setBounds(178, 432, 148, 28); kitSaveButton.setBounds(338, 432, 120, 28); kitReloadButton.setBounds(470, 432, 126, 28);
-    songSelect.setBounds(178, 316, 172, 28); songRowSelect.setBounds(362, 316, 172, 28);
-    songAddButton.setBounds(546, 316, 125, 28); songDeleteButton.setBounds(683, 316, 144, 28);
-    songPlayButton.setBounds(178, 390, 135, 28); songQueueButton.setBounds(325, 390, 145, 28); songMutesButton.setBounds(482, 390, 145, 28);
-    arrangementBackButton.setBounds(710, 432, 116, 28);
+
+    transportDials[0]->setBounds(178, 323, 78, 95);
+    transportDials[1]->setBounds(266, 323, 78, 95);
+    patternLength.setBounds(356, 347, 145, 25);
+    editScope.setBounds(515, 347, 145, 25);
+    trackSpeed.setBounds(671, 347, 72, 25);
+    fillButton.setBounds(755, 347, 74, 25);
+    copyButton.setBounds(356, 385, 80, 27);
+    pasteButton.setBounds(444, 385, 80, 27);
+    clearButton.setBounds(532, 385, 115, 27);
+    demoButton.setBounds(657, 385, 121, 27);
+    temporarySaveButton.setBounds(178, 445, 112, 28);
+    temporaryReloadButton.setBounds(298, 445, 112, 28);
+    muteButton.setBounds(418, 445, 66, 28);
+    reverseButton.setBounds(492, 445, 80, 28);
+    loopButton.setBounds(580, 445, 64, 28);
+    for (int i = 0; i < 8; ++i)
+        bankButtons[static_cast<std::size_t>(i)].setBounds(178 + i * 75, 323, 64, 28);
+    arrangementLabel.setBounds(178, 359, 650, 23);
+    chainText.setBounds(178, 390, 370, 28);
+    chainAppendButton.setBounds(558, 390, 118, 28);
+    chainApplyButton.setBounds(686, 390, 143, 28);
+    performKitButton.setBounds(178, 445, 148, 28);
+    kitSaveButton.setBounds(338, 445, 120, 28);
+    kitReloadButton.setBounds(470, 445, 126, 28);
+    songSelect.setBounds(178, 323, 150, 28);
+    songRowSelect.setBounds(338, 323, 150, 28);
+    songAddButton.setBounds(498, 323, 135, 28);
+    songDeleteButton.setBounds(643, 323, 186, 28);
+    songPlayButton.setBounds(178, 390, 135, 28);
+    songQueueButton.setBounds(325, 390, 145, 28);
+    songMutesButton.setBounds(482, 390, 145, 28);
+    arrangementBackButton.setBounds(654, 445, 112, 28);
+
     for (int i = 0; i < 16; ++i)
-        trackPads[static_cast<std::size_t>(i)]->setBounds(85 + i * 48, 684, 44, 26);
-    importButton.setBounds(53, 720, 119, 28);
-    triggerButton.setBounds(181, 720, 82, 28);
-    hostButton.setBounds(272, 720, 94, 28);
-    stepToolsButton.setBounds(375, 720, 106, 28);
-    sendFxButton.setBounds(490, 720, 85, 28);
-    undoButton.setBounds(584, 720, 64, 28);
-    toolsButton.setBounds(657, 720, 130, 28);
-    helpButton.setBounds(796, 720, 37, 28);
-    pitchLockButton.setBounds(177, 289, 120, 20);
-    cutoffLockButton.setBounds(305, 289, 120, 20);
-    statusLabel.setBounds(23, 756, 854, 19);
+        trackPads[static_cast<std::size_t>(i)]->setBounds(85 + i * 48, 709, 44, 20);
+    importButton.setBounds(53, 738, 119, 24);
+    triggerButton.setBounds(181, 738, 82, 24);
+    hostButton.setBounds(272, 738, 94, 24);
+    stepToolsButton.setBounds(375, 738, 106, 24);
+    sendFxButton.setBounds(490, 738, 85, 24);
+    undoButton.setBounds(584, 738, 64, 24);
+    toolsButton.setBounds(657, 738, 130, 24);
+    helpButton.setBounds(796, 738, 37, 24);
+    pitchLockButton.setBounds(178, 273, 118, 20);
+    cutoffLockButton.setBounds(305, 273, 123, 20);
+    statusLabel.setBounds(53, 766, 794, 14);
 }
 
 void TaktAudioProcessorEditor::paintPanel(juce::Graphics& g)
 {
     g.fillAll(background);
-    const auto shell = juce::Rectangle<float>(52.0f, 12.0f, 796.0f, 660.0f);
-    g.setGradientFill(juce::ColourGradient(juce::Colour(0xff303236), 52, 12,
-                                         juce::Colour(0xff202226), 848, 672, false));
-    g.fillRoundedRectangle(shell, 7.0f);
-    g.setColour(border); g.drawRoundedRectangle(shell.reduced(0.5f), 7.0f, 1.0f);
-    for (const auto point : {juce::Point<float>(74, 34), {826, 34}, {74, 652}, {826, 652}})
+    const auto shell = hardwareSurface.getBounds().toFloat();
+    g.setGradientFill(juce::ColourGradient(juce::Colour(0xff2b2c2e), 32, 16,
+                                         juce::Colour(0xff232426), 868, 700, false));
+    g.fillRoundedRectangle(shell, 6);
+    g.setColour(border); g.drawRoundedRectangle(shell.reduced(.5f), 6, 1);
+    for (const auto point : {juce::Point<float>(56, 39), {844, 39}, {56, 678}, {844, 678}})
     {
-        g.setColour(juce::Colour(0xff0b0d0f)); g.fillEllipse(point.x - 5, point.y - 5, 10, 10);
-        g.setColour(border.brighter()); g.drawLine(point.x - 3, point.y, point.x + 3, point.y, 1);
+        g.setColour(juce::Colour(0xff111214)); g.fillEllipse(point.x - 4, point.y - 4, 8, 8);
+        g.setColour(border); g.drawLine(point.x - 2, point.y, point.x + 2, point.y, 1);
     }
-    drawCaption(g, "TAKT II", {88, 25, 285, 24}, 16, ink, true);
-    drawCaption(g, "SAMPLE / SEQUENCE", {497, 28, 318, 20}, 10, mutedInk, false, juce::Justification::centredRight);
+    drawCaption(g, "TAKT II", {738, 49, 95, 26}, 16, ink, true, juce::Justification::centredRight);
+    drawCaption(g, "DIGITAL SAMPLER", {66, 53, 174, 16}, 8, mutedInk);
+
+    const bool overlay = toolsVisible || view == View::Patterns || view == View::Song || helpVisible;
     const auto host = displayedHostClock;
     const auto playing = displayedPlaying;
     const std::array<const char*, 6> familyNames{{"TRIG", "SRC", "FLTR", "AMP", "FX", "MOD"}};
     const auto context = view == View::Patterns ? juce::String("PATTERNS")
                        : view == View::Song ? juce::String("SONG ") + number(selectedSong + 1) + " ROW " + number(selectedSongRow + 1)
                        : view == View::SliceEditor ? juce::String("SLICE ") + juce::String(selectedSlice + 1) + "/" + juce::String(currentSliceCount())
-                       : view == View::StepTools ? juce::String("STEP TOOLS*")
-                       : view == View::SendFx ? juce::StringArray{"DELAY*", "REVERB*", "CHORUS"}[sendFxPage]
+                       : view == View::StepTools ? juce::String("STEP TOOLS")
+                       : view == View::SendFx ? juce::StringArray{"DELAY", "REVERB", "CHORUS"}[sendFxPage]
                        : juce::String(familyNames[static_cast<std::size_t>(family)]);
-    const auto sourceWave = view == View::SliceEditor || (view == View::Parameters && family == Family::Source && parameterPages[1] == 1);
-    g.setColour(juce::Colour(0xff090b0e)); g.fillRoundedRectangle(166, 76, 271, 220, 5);
-    g.setColour(juce::Colours::black); g.fillRect(174, 84, 255, 162);
-    drawCaption(g, patternName(uiSnapshot.currentPattern) + (uiSnapshot.performKit ? " P" : "") + "  T" + number(selectedTrack + 1), {181, 89, 147, 15}, 10, ink, true);
-    drawCaption(g, host ? juce::String("DAW") : juce::String(displayedTempo, 1), {340, 89, 81, 15}, 10, ink, true, juce::Justification::centredRight);
-    g.setColour(ink.withAlpha(0.4f)); g.drawHorizontalLine(107, 180, 422);
+    const bool sourceWave = view == View::SliceEditor || (view == View::Parameters && family == Family::Source && parameterPages[1] == 1);
+    g.setColour(juce::Colour(0xff101113)); g.fillRoundedRectangle(153, 100, 287, 198, 4);
+    g.setColour(juce::Colours::black); g.fillRect(172, 124, 256, 128);
+    const auto oledText = [&g](const juce::String& text, juce::Rectangle<int> bounds, float size, bool bold = false,
+                               juce::Justification alignment = juce::Justification::centredLeft)
+    {
+        g.setColour(ink);
+        g.setFont(juce::Font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), size,
+                                             bold ? juce::Font::bold : juce::Font::plain)));
+        g.drawFittedText(text, bounds, alignment, 1);
+    };
+    oledText(patternName(uiSnapshot.currentPattern) + (uiSnapshot.performKit ? " P" : "") + "  T" + number(selectedTrack + 1),
+             {180, 127, 145, 14}, 11, true);
+    oledText((host ? "DAW " : "") + juce::String(displayedTempo, 1), {326, 127, 94, 14}, 11, true, juce::Justification::centredRight);
+    g.setColour(ink.withAlpha(.35f)); g.drawHorizontalLine(143, 180, 420);
     const auto pageCaption = view == View::Parameters
-        ? "  " + juce::String(parameterPages[static_cast<std::size_t>(family)] + 1) + "/" + juce::String(parameterPageCount()) : juce::String{};
+        ? " " + juce::String(parameterPages[static_cast<std::size_t>(family)] + 1) + "/" + juce::String(parameterPageCount()) : juce::String{};
     const std::array<const char*, 7> machineNames{{"LEGACY", "ONESHOT", "WERP", "STRETCH", "REPITCH", "SLICE", "GRID"}};
     const std::array<const char*, 7> filterNames{{"PROTOTYPE", "MULTI", "LP4", "EQ", "COMB-", "COMB+", "LEGACY"}};
     const auto machineCaption = view == View::Parameters && family == Family::Source ? juce::String(" ") + machineNames[static_cast<std::size_t>(juce::jlimit(0, 6, displayedMachine))]
         : view == View::Parameters && family == Family::Filter ? juce::String(" ") + filterNames[static_cast<std::size_t>(juce::jlimit(0, 6, displayedFilterMachine))]
         : view == View::Parameters && family == Family::Amp ? juce::String(" ") + juce::StringArray{"LEGACY", "AHD", "ADSR"}[juce::jlimit(0, 2, displayedAmpMode)] : juce::String{};
-    drawCaption(g, context + machineCaption + pageCaption,
-                {181, 111, 240, 17}, 10, ink, true);
+    oledText(context + machineCaption + pageCaption, {180, 146, 240, 12}, 10, true);
     if (!sourceWave)
-    {
         for (int i = 0; i < 8; ++i)
         {
-            const int x = 181 + (i % 4) * 60, y = 139 + (i / 4) * 45;
+            const int x = 180 + (i % 4) * 60, y = 162 + (i / 4) * 36;
             auto& dial = *encoders[static_cast<std::size_t>(i)];
-            drawCaption(g, dial.caption(), {x, y, 58, 14}, 8.5f,
-                        dial.slider.isEnabled() ? ink : mutedInk, false, juce::Justification::centred);
-            drawCaption(g, dial.slider.getTextFromValue(dial.slider.getValue()), {x, y + 14, 58, 18}, 10.5f,
-                        dial.slider.isEnabled() ? ink : mutedInk, true, juce::Justification::centred);
+            oledText(dial.caption(), {x, y, 58, 11}, 9);
+            oledText(dial.slider.isEnabled() ? dial.slider.getTextFromValue(dial.slider.getValue()) : "--",
+                     {x, y + 12, 58, 17}, 12, true, juce::Justification::centredLeft);
         }
-    }
-    drawCaption(g, view == View::SliceEditor ? juce::String(linkedSlicePoints ? "LINKED" : "UNLINKED") + "  < / > SLICE   YES EXIT"
-        : view == View::Patterns ? "BANK " + juce::String::charToString(static_cast<juce::juce_wchar>('A' + selectedBank)) + "  PADS SELECT PATTERN"
-        : view == View::Song ? "PADS SELECT SONG  /  ENCODERS EDIT ROW"
-        : "STEP " + number(selectedStep + 1) + "  LEN " + juce::String(displayedTrackLength),
-                {181, 226, 240, 15}, 9, ink);
+    const auto footer = view == View::SliceEditor ? juce::String(linkedSlicePoints ? "LINKED" : "UNLINKED") + "  SLICE " + juce::String(selectedSlice + 1)
+        : view == View::Patterns ? "BANK " + juce::String::charToString(static_cast<juce::juce_wchar>('A' + selectedBank)) + "  SELECT PATTERN"
+        : view == View::Song ? "PADS SELECT SONG"
+        : view == View::Parameters && family == Family::Source ? number(selectedTrack + 1) + " " + uiSnapshot.sampleName
+        : "STEP " + number(selectedStep + 1) + "  LEN " + juce::String(displayedTrackLength);
+    oledText(footer, {180, 235, 240, 13}, 10);
+    if (view != View::StepTools) drawCaption(g, "TAKT II", {165, 269, 108, 25}, 14, ink, true);
+
     for (int i = 0; i < 8; ++i)
         drawCaption(g, juce::String::charToString(static_cast<juce::juce_wchar>('A' + i)),
-                    {461 + (i % 4) * 104, 174 + (i / 4) * 107, 86, 16}, 12, ink, true, juce::Justification::centred);
-    drawCaption(g, "MAIN VOLUME", {64, 170, 95, 16}, 8, ink, false, juce::Justification::centred);
-    drawCaption(g, "LEVEL / DATA", {64, 280, 95, 16}, 8, ink, false, juce::Justification::centred);
-    drawCaption(g, "COPY", {179, 452, 60, 17}, 9, accent, false, juce::Justification::centred);
-    drawCaption(g, "CLEAR", {249, 452, 60, 17}, 9, accent, false, juce::Justification::centred);
-    drawCaption(g, "PASTE", {319, 452, 60, 17}, 9, accent, false, juce::Justification::centred);
-    drawCaption(g, "SAVE", {460, 410, 53, 15}, 8, accent, false, juce::Justification::centred);
-    drawCaption(g, "RELOAD", {458, 475, 56, 15}, 8, accent, false, juce::Justification::centred);
-    drawCaption(g, "SELECT", {78, 488, 70, 15}, 8, accent, false, juce::Justification::centred);
-    drawCaption(g, "BANK", {78, 565, 70, 15}, 8, accent, false, juce::Justification::centred);
-    drawCaption(g, "EDIT", {78, 641, 70, 15}, 8, accent, false, juce::Justification::centred);
-    drawCaption(g, "SEND FX", {710, 347, 69, 14}, 8, accent, false, juce::Justification::centred);
-    drawCaption(g, view == View::Patterns ? "SELECT PATTERN 1-16" : view == View::Song ? "SELECT SONG 1-16" : gridRecording ? "GRID RECORDING" : "TRIG TRACKS", {180, 482, 249, 16}, 9, gridRecording ? trigRed : ink, true);
-    const auto current = displayedCurrentStep;
-    const auto playedPage = playing && current >= 0 ? current / 16 : -1;
-    drawCaption(g, "EDIT " + juce::String(selectedPage + 1) + " / PLAY " + (playedPage >= 0 ? juce::String(playedPage + 1) : "--"),
-                {660, 461, 170, 17}, 8, mutedInk, false, juce::Justification::centredRight);
-    if (playedPage >= 0) { g.setColour(trigRed); g.fillEllipse(static_cast<float>(678 + playedPage * 20), 426, 5, 5); }
-    drawCaption(g, host ? "DAW CLOCK" : "INTERNAL CLOCK", {176, 55, 157, 16}, 8.5f, mutedInk);
-    drawCaption(g, playing ? "PLAY" : "PAUSE", {357, 55, 67, 16}, 8.5f, playing ? accent : mutedInk, true, juce::Justification::centredRight);
-    g.setColour(border); g.fillRoundedRectangle(758, 647, 70, 4, 1);
-    g.setColour(displayedPeak > 0.97f ? trigRed : accent); g.fillRoundedRectangle(758, 647, 70 * juce::jlimit(0.0f, 1.0f, displayedPeak), 4, 1);
-    drawCaption(g, "VST", {53, 685, 29, 23}, 9, mutedInk, true);
+                    {460 + (i % 4) * 102, 177 + (i / 4) * 98, 64, 16}, 11, ink, false, juce::Justification::centred);
+    drawCaption(g, "MAIN VOLUME", {56, 179, 89, 14}, 8, ink, false, juce::Justification::centred);
+    drawCaption(g, "LEVEL / DATA", {50, 278, 101, 14}, 8, ink, false, juce::Justification::centred);
+    drawCaption(g, "PRESET POOL", {50, 293, 101, 12}, 7, mutedInk, false, juce::Justification::centred);
+    drawCaption(g, "KB SETUP", {76, 455, 66, 13}, 8, accent, false, juce::Justification::centred);
+    drawCaption(g, "MUTE", {76, 523, 66, 13}, 8, accent, false, juce::Justification::centred);
+    drawCaption(g, "BANK", {76, 589, 66, 13}, 8, accent, false, juce::Justification::centred);
+    drawCaption(g, "SONG EDIT", {76, 655, 66, 13}, 8, accent, false, juce::Justification::centred);
+    if (!overlay)
+    {
+        const std::array<const char*, 6> secondary{{"QUANTIZE", "MACHINE", "SETUP", "SEQUENCER", "SEND FX", "MIXER"}};
+        for (int i = 0; i < 6; ++i)
+            drawCaption(g, secondary[static_cast<std::size_t>(i)], {458 + i * 62, 352, 59, 13}, 7, accent, false, juce::Justification::centred);
+        const std::array<const char*, 4> menus{{"PERFORM", "SAVE PROJ", "SAMPLES", "TAP TEMPO"}};
+        for (int i = 0; i < 4; ++i)
+            drawCaption(g, menus[static_cast<std::size_t>(i)], {174 + i * 64, 394, 58, 12}, 7, accent, false, juce::Justification::centred);
+        drawCaption(g, "COPY", {179, 456, 60, 13}, 8, accent, false, juce::Justification::centred);
+        drawCaption(g, "CLEAR", {260, 456, 60, 13}, 8, accent, false, juce::Justification::centred);
+        drawCaption(g, "PASTE", {341, 456, 60, 13}, 8, accent, false, juce::Justification::centred);
+        drawCaption(g, "SAVE", {464, 423, 48, 13}, 8, accent, false, juce::Justification::centred);
+        drawCaption(g, "RELOAD", {459, 488, 58, 13}, 8, accent, false, juce::Justification::centred);
+        const auto playedPage = playing && displayedCurrentStep >= 0 ? displayedCurrentStep / 16 : -1;
+        if (playedPage >= 0)
+        {
+            g.setColour(accent);
+            g.drawEllipse(static_cast<float>(750 + (playedPage % 4) * 21),
+                          static_cast<float>(381 + (playedPage / 4) * 21), 15, 15, 1);
+        }
+        drawCaption(g, "FILL / SETUP", {746, 488, 87, 13}, 8, accent, false, juce::Justification::centred);
+    }
+    if (overlay && !helpVisible)
+    {
+        g.setColour(juce::Colour(0xff1b1c1e));
+        g.fillRoundedRectangle(drawerBackdrop.getBounds().toFloat(), 4);
+    }
+    if (toolsVisible && !helpVisible && view != View::Patterns && view != View::Song)
+    {
+        drawCaption(g, "TRACK LENGTH", {356, 322, 145, 19}, 9, mutedInk);
+        drawCaption(g, "CLIPBOARD", {515, 322, 145, 19}, 9, mutedInk);
+        drawCaption(g, "SPEED", {671, 322, 72, 19}, 9, mutedInk);
+    }
+    g.setColour(border); g.fillRoundedRectangle(756, 683, 76, 3, 1);
+    g.setColour(displayedPeak > .97f ? trigRed : accent);
+    g.fillRoundedRectangle(756, 683, 76 * juce::jlimit(0.0f, 1.0f, displayedPeak), 3, 1);
+    drawCaption(g, "VST", {53, 708, 29, 22}, 8, mutedInk);
 }
 
 void TaktAudioProcessorEditor::updateVisibility()
@@ -856,6 +1007,20 @@ void TaktAudioProcessorEditor::updateVisibility()
     const bool drawer = toolsVisible && !helpVisible;
     const bool patterns = view == View::Patterns && !helpVisible, song = view == View::Song && !helpVisible;
     const bool arrangement = patterns || song;
+    const bool overlay = drawer || arrangement || helpVisible;
+    // Hide covered controls instead of leaving active hit targets below an overlay.
+    for (auto* control : std::initializer_list<juce::Component*>{&gridButton, &runButton, &stopButton,
+             &yesButton, &previousPageButton, &nextPageButton, &leftButton, &rightButton, &pageButton})
+        control->setVisible(!overlay);
+    for (auto& button : familyButtons) button.setVisible(!overlay);
+    for (auto& button : centreButtons) button.setVisible(!overlay);
+    for (auto& button : pageButtons) button.setVisible(!overlay);
+    for (auto& pad : stepPads) pad->setVisible(!helpVisible);
+    sampleLabel.setVisible(false);
+    sampleInfoLabel.setVisible(false);
+    noButton.setBounds(helpVisible ? juce::Rectangle<int>(774, 639, 55, 28)
+                                  : overlay ? juce::Rectangle<int>(774, 445, 55, 28)
+                                            : juce::Rectangle<int>(464, 443, 48, 42));
     drawerBackdrop.setVisible(drawer || arrangement);
     if (drawer || arrangement) drawerBackdrop.toFront(false);
     for (auto* dial : {transportDials[0].get(), transportDials[1].get()})
@@ -875,6 +1040,7 @@ void TaktAudioProcessorEditor::updateVisibility()
     pitchLockButton.setVisible(!drawer && !helpVisible && view == View::StepTools);
     cutoffLockButton.setVisible(!drawer && !helpVisible && view == View::StepTools);
     helpLabel.setVisible(helpVisible); if (helpVisible) helpLabel.toFront(false);
+    noButton.toFront(false);
 }
 
 void TaktAudioProcessorEditor::internalPlayPause()
@@ -1196,7 +1362,7 @@ void TaktAudioProcessorEditor::rebuildControls()
             if (machine != 4) bindParameter(0, "pitch", "TUNE", ValueFormat::Pitch, "Sample tuning. Existing pitch automation range is retained.");
             if (machine == 0) bindPlayback(1);
             else bindChoice(1, "playMode", "PLAY", {"FWD", "REV", "FWD LOOP", "REV LOOP"}, "Direction and looping between the selected source/slice region.");
-            bindUnavailable(3, "SAMP", "Import a sample with the button below this encoder. An internal hardware sample pool is not emulated.");
+            bindUnavailable(3, "SAMP", "Import a sample with the button below the screen. An internal hardware sample pool is not emulated.");
             if (machine == 0)
             {
                 bindParameter(4, "start", "START*", ValueFormat::Percent, "Absolute sample start; original automation is retained.");
@@ -1897,10 +2063,10 @@ void TaktAudioProcessorEditor::timerCallback()
     const auto host = processor.isUsingHostClock();
     const auto playing = host ? processor.isHostPlaying() : processor.parameterValue("play") >= 0.5f;
     if (host != displayedHostClock || playing != displayedPlaying)
-        panel->repaint(176, 53, 249, 20);
+        panel->repaint(172, 124, 256, 128);
     displayedHostClock = host; displayedPlaying = playing; displayedTempo = processor.parameterValue("tempo");
     if (std::abs(oldPeak - displayedPeak) >= 0.001f || (oldPeak != 0.0f && displayedPeak == 0.0f))
-        panel->repaint(757, 645, 73, 8);
+        panel->repaint(755, 682, 78, 5);
     runButton.setToggleState(playing, juce::dontSendNotification);
     fillButton.setToggleState(processor.parameterValue("fill") >= 0.5f, juce::dontSendNotification);
     const auto wasRefreshing = refreshing; refreshing = true;
@@ -1967,7 +2133,7 @@ void TaktAudioProcessorEditor::timerCallback()
     }
     const auto playingPage = playing && displayedCurrentStep >= 0 ? displayedCurrentStep / 16 : -1;
     if (displayedPlayingPage != playingPage)
-    { displayedPlayingPage = playingPage; panel->repaint(659, 423, 172, 57); }
+    { displayedPlayingPage = playingPage; panel->repaint(745, 378, 96, 45); }
     auto oled = juce::String(uiSnapshot.currentPattern) + ":" + juce::String(uiSnapshot.performKit ? 1 : 0)
         + ":" + juce::String(selectedTrack) + ":" + juce::String(selectedStep) + ":" + juce::String(displayedTrackLength)
         + ":" + juce::String(static_cast<int>(view)) + ":" + juce::String(static_cast<int>(family))
@@ -1975,11 +2141,11 @@ void TaktAudioProcessorEditor::timerCallback()
         + ":" + juce::String(displayedMachine) + ":" + juce::String(displayedFilterMachine) + ":" + juce::String(displayedAmpMode)
         + ":" + juce::String(selectedBank) + ":" + juce::String(selectedSong) + ":" + juce::String(selectedSongRow)
         + ":" + juce::String(selectedSlice) + ":" + juce::String(currentSliceCount()) + ":" + juce::String(linkedSlicePoints ? 1 : 0)
-        + ":" + juce::String(host ? 1 : 0) + ":" + juce::String(displayedTempo, 1);
+        + ":" + juce::String(host ? 1 : 0) + ":" + juce::String(displayedTempo, 1) + ":" + uiSnapshot.sampleName;
     for (const auto& encoder : encoders)
         oled += ":" + encoder->caption() + ":" + encoder->slider.getTextFromValue(encoder->slider.getValue()) + (encoder->slider.isEnabled() ? ":1" : ":0");
     if (lastOledContents != oled)
-    { lastOledContents = std::move(oled); panel->repaint(165, 75, 273, 222); }
+    { lastOledContents = std::move(oled); panel->repaint(152, 99, 289, 200); }
     if (++timerTicks % 6 == 0) processor.releaseUnusedSamples();
 }
 
