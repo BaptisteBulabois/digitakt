@@ -45,6 +45,8 @@ private:
     void layoutPanel();
     void selectTrack(int);
     void selectStep(int, bool toggle);
+    void handlePad(int, bool activate);
+    void setMuteMode(bool);
     void selectFamily(Family);
     void changeParameterPage(int delta);
     void selectSequencerPage(int page);
@@ -166,6 +168,12 @@ private:
     View view = View::Parameters;
     std::array<int, 6> parameterPages{};
     bool gridRecording = true, helpVisible = false;
+    bool muteMode = false;
+    std::array<std::uint64_t, takt::numTracks> displayedTriggerSerials{};
+    std::array<double, takt::numTracks> trackPulseUntil{};
+    std::array<std::int64_t, takt::numTracks> displayedMutePositions{};
+    std::array<double, takt::numTracks> mutePulseUntil{};
+    bool activityInitialized = false;
     bool toolsVisible = false;
     bool refreshing = false;
     bool updatingTimer = false;

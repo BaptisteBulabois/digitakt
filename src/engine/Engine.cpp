@@ -153,6 +153,7 @@ void Engine::reset()
     chorus_.reset();
     lfoStates_ = {};
     currentSteps_.fill(0);
+    absoluteSteps_.fill(0);
     internalPpq_ = 0.0;
     retrigTrains_ = {};
     conditionMemory_ = {};
@@ -334,11 +335,27 @@ void Engine::restartSequencer(bool preserveVoices)
     pendingOrigin_ = true;
     wasPlaying_ = false;
     currentSteps_.fill(0);
+    absoluteSteps_.fill(0);
 }
 
 int Engine::getCurrentStep(int track) const
 {
     return track >= 0 && track < numTracks ? currentSteps_[track] : 0;
+}
+
+std::int64_t Engine::getAbsoluteStep(int track) const
+{
+    return track >= 0 && track < numTracks ? absoluteSteps_[track] : 0;
+}
+
+std::uint64_t Engine::getTriggerSerial(int track) const
+{
+    return track >= 0 && track < numTracks ? triggerSerials_[track] : 0;
+}
+
+bool Engine::isTrackMuted(int track) const
+{
+    return track >= 0 && track < numTracks && params_[track].mute;
 }
 
 double Engine::stepTime(std::int64_t index) const
@@ -557,6 +574,7 @@ void Engine::trigger(int track, float velocity, float pitch, bool lockPitch, flo
     }
     updateVoiceCoefficients(track);
     v.active = v.velocity > 0.0f;
+    if (v.active) ++triggerSerials_[track];
 }
 
 void Engine::noteOff(int track, int note)
@@ -1092,6 +1110,7 @@ void Engine::process(float* left, float* right, int numSamples, const Transport&
             auto index = static_cast<std::int64_t>(std::floor(std::max(0.0,
                 finalPpq - sequenceOriginPpq_ - beatsPerSample) / duration));
             if (trackStepTime(track, index) > finalPpq - beatsPerSample && index > 0) --index;
+            absoluteSteps_[track] = index;
             currentSteps_[track] = static_cast<int>(index % lengths_[track]);
         }
     }

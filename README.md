@@ -8,7 +8,7 @@ La priorité est maintenant la **fidélité de l'interface et du workflow musica
 
 Le manuel officiel **OS 1.17** et les notes des versions ont été analysés avec
 des agents. La [spécification de workflow](docs/WORKFLOW_SPEC.md) décrit les
-références et les étapes d'implémentation. Cette branche fournit **0.3.2 en développement** :
+références et les étapes d'implémentation. Cette branche fournit **0.3.3 en développement** :
 machines SRC, trois LFO par piste, enveloppes et filtres, conditions avancées,
 banques, chaînes et Song Mode. **La version stable 0.2.0 reste sur `main`.**
 
@@ -24,7 +24,13 @@ proportions du panneau officiel, supprime les débordements et regroupe les
 valeurs dans l'écran. Les codeurs, les voyants de page et le transport suivent
 la disposition du Digitakt II.
 
-![Interface de Takt II 0.3.2](docs/images/takt-ii-0.3.2.png)
+La 0.3.3 remet les lumières du séquenceur dans les numéros TRIG 1–16 :
+notes rouges, lock trigs jaunes, locks clignotants et curseur blanc en lecture,
+y compris hors GRID. TRK affiche la piste sélectionnée ; FUNC + TRK ouvre
+les mutes. Les [règles et adaptations](docs/reference/TRIG_LIGHTS_REFERENCE.md)
+précisent la comparaison avec le manuel.
+
+![Interface de Takt II 0.3.3](docs/images/takt-ii-0.3.3.png)
 
 Le [guide du workflow 0.3](docs/WORKFLOW_0_3.md) explique les gestes,
 les imports, les arrangements et les adaptations de cette branche. Le

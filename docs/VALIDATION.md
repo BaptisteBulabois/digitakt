@@ -234,3 +234,32 @@ a été téléchargée et inspectée : bundle complet, binaire PE AMD64, manifes
 0.3.2, identité VST3 conservée, capture Windows 900 × 780, huit captures de
 galerie et guide d'installation présents. Cette validation utilise un host
 de test JUCE ; elle ne constitue pas un essai de la 0.3.2 dans Ableton Live.
+
+## Lumières du séquenceur de développement 0.3.3
+
+Le 10 octobre 2026, `bash scripts/build.sh` réussit sous Linux : les six
+cibles CTest passent, avec zéro allocation dans le traitement audio mesuré.
+Les tests du moteur vérifient les compteurs d'activité réels, conditions
+refusées, lock trigs, mutes, notes courtes et retriggers. Ils vérifient aussi
+la position absolue d'une piste muette de longueur un, dont le pas affiché
+reste à zéro malgré les cycles successifs.
+
+La suite GUI et la validation du bundle VST3 réel passent : MIDI stéréo,
+automation, sauvegarde/rappel et rendu WAV quatre mesures. Les nouvelles
+régressions couvrent :
+
+- note rouge, lock trig jaune, pas vide sombre et locks clignotants ;
+- curseur blanc dans le numéro, suivi host/interne, arrêt et changements de
+  page, sans modification du projet par l'affichage ;
+- TRK silencieux, mutes latched/quick mute et même dispatch souris/clavier ;
+- notes MIDI et auditions plus courtes qu'un bloc, extinction des flashes et
+  absence de nouvelle activité sur piste muette ;
+- réouverture de l'éditeur sans faux flash d'une ancienne note ;
+- piste mutée à une vitesse différente, pas d'indice impair et boucles d'un
+  seul pas avec flash répété à chaque cycle.
+
+Les contrôles géométriques aux trois tailles couvrent aussi la séquence en
+lecture et le mode MUTE. La galerie comprend dix captures supplémentaires
+au panneau par défaut. Les règles documentées et les limites sont dans
+[TRIG_LIGHTS_REFERENCE.md](reference/TRIG_LIGHTS_REFERENCE.md). Ce lot ne
+modifie pas les algorithmes de rendu sonore ni le format d'état musical.

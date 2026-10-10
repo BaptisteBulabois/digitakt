@@ -265,6 +265,10 @@ TaktAudioProcessor::TaktAudioProcessor()
       parameters(*this, nullptr, "TAKT_II", createParameterLayout())
 {
     static_assert(std::size(trackNames) == trackParameterCount, "Track snapshot and parameter names must agree");
+    static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
+                  "Trigger activity publication must never lock the audio thread");
+    static_assert(std::atomic<std::int64_t>::is_always_lock_free,
+                  "Absolute step publication must never lock the audio thread");
     importLifetime->owner = this;
     lengths.fill(16);
     for (int t = 0; t < takt::numTracks; ++t)
@@ -277,6 +281,9 @@ TaktAudioProcessor::TaktAudioProcessor()
         sampleDurations[static_cast<size_t>(t)].store(samples[static_cast<size_t>(t)]->left.size()
                                                    / samples[static_cast<size_t>(t)]->sampleRate);
         currentSteps[static_cast<size_t>(t)].store(-1);
+        absoluteSteps[static_cast<size_t>(t)].store(0, std::memory_order_relaxed);
+        triggerSerials[static_cast<size_t>(t)].store(0, std::memory_order_relaxed);
+        trackMuted[static_cast<size_t>(t)].store(false, std::memory_order_relaxed);
         for (size_t p = 0; p < std::size(trackNames); ++p)
         {
             trackValues[static_cast<size_t>(t)][p] = parameters.getRawParameterValue(trackParameterID(t, trackNames[p]));
@@ -675,7 +682,12 @@ void TaktAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     buffer.applyGain(master);
     outputPeak.store(juce::jmax(buffer.getMagnitude(0, 0, count), buffer.getMagnitude(1, 0, count)));
     for (int t = 0; t < takt::numTracks; ++t)
+    {
         currentSteps[static_cast<size_t>(t)].store(engine.getCurrentStep(t));
+        absoluteSteps[static_cast<size_t>(t)].store(engine.getAbsoluteStep(t), std::memory_order_relaxed);
+        triggerSerials[static_cast<size_t>(t)].store(engine.getTriggerSerial(t), std::memory_order_relaxed);
+        trackMuted[static_cast<size_t>(t)].store(engine.isTrackMuted(t), std::memory_order_relaxed);
+    }
     midi.clear();
 }
 
@@ -2039,6 +2051,9 @@ TaktAudioProcessor::UiSnapshot TaktAudioProcessor::getUiSnapshot(
         for (size_t t = 0; t < result.currentSteps.size(); ++t)
         {
             result.currentSteps[t] = currentSteps[t].load();
+            result.absoluteSteps[t] = absoluteSteps[t].load(std::memory_order_relaxed);
+            result.triggerSerials[t] = triggerSerials[t].load(std::memory_order_relaxed);
+            result.trackMuted[t] = trackMuted[t].load(std::memory_order_relaxed);
             const int current = result.currentSteps[t];
             result.currentTrigEnabled[t] = current >= 0 && current < takt::maxSteps
                 && sequenceSteps[t][static_cast<size_t>(current)].enabled;

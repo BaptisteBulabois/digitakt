@@ -132,7 +132,10 @@ public:
     struct UiSnapshot
     {
         std::array<int, takt::numTracks> currentSteps{};
+        std::array<std::int64_t, takt::numTracks> absoluteSteps{};
         std::array<bool, takt::numTracks> currentTrigEnabled{};
+        std::array<std::uint64_t, takt::numTracks> triggerSerials{};
+        std::array<bool, takt::numTracks> trackMuted{};
         std::array<takt::Step, 16> visibleSteps{};
         takt::Step selectedStepValue{};
         int trackLength = 16, patternLength = 16;
@@ -266,6 +269,9 @@ private:
     bool restoringPattern = false; // protected by controlMutex
     std::atomic<bool> patternDirty{true}, samplesDirty{true};
     std::array<std::atomic<int>, takt::numTracks> currentSteps;
+    std::array<std::atomic<std::int64_t>, takt::numTracks> absoluteSteps;
+    std::array<std::atomic<std::uint64_t>, takt::numTracks> triggerSerials;
+    std::array<std::atomic<bool>, takt::numTracks> trackMuted;
     std::array<std::atomic<double>, takt::numTracks> sampleDurations;
     std::atomic<float> outputPeak{0};
     std::atomic<bool> hostPlaying{false};

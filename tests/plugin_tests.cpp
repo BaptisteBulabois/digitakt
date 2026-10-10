@@ -2811,6 +2811,320 @@ void testEditorKeyboard()
     passed("Windows CTRL+C/V/Z key codes work without text characters and bypass text input events");
 }
 
+juce::var padLight(juce::Component& editor, int pad, const juce::Identifier& property)
+{
+    return component<juce::Button>(editor, "trig-" + juce::String(pad + 1)).getProperties()[property];
+}
+
+bool padCursor(juce::Component& editor, int pad)
+{
+    return static_cast<bool>(padLight(editor, pad, "ledPlayhead"));
+}
+
+void testSequencerLights()
+{
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
+    configureDry(processor);
+    for (int track = 0; track < takt::numTracks; ++track) processor.clearTrack(track);
+    processor.setTrackLength(0, 32);
+    takt::Step noteTrig;
+    noteTrig.enabled = true; noteTrig.advanced = true;
+    processor.setStep(0, 0, noteTrig);
+    auto lockedNote = noteTrig;
+    lockedNote.lockPitch = true; lockedNote.pitch = 7;
+    processor.setStep(0, 1, lockedNote);
+    takt::Step lockTrig;
+    lockTrig.lockTrig = true; lockTrig.advanced = true;
+    processor.setStep(0, 2, lockTrig);
+    processor.setStep(0, 21, noteTrig);
+    TestPlayHead host;
+    host.set(0, 120, false);
+    processor.setParameter("hostSync", 1);
+    processor.setPlayHead(&host);
+    processor.prepareToPlay(testRate, testBlock);
+    process(processor, testBlock);
+    std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
+    const auto unchangedProject = stateOf(processor);
+    check(padLight(*editor, 0, "ledMode").toString() == "grid"
+              && padLight(*editor, 0, "ledBaseColour").toString() == "red"
+              && padLight(*editor, 1, "ledBaseColour").toString() == "red"
+              && static_cast<bool>(padLight(*editor, 1, "ledLock"))
+              && padLight(*editor, 2, "ledBaseColour").toString() == "yellow"
+              && padLight(*editor, 3, "ledBaseColour").toString() == "off",
+          "GRID did not distinguish red note trigs, their locks, yellow lock trigs and empty keys");
+    pumpMessagesUntil([&] { return !static_cast<bool>(padLight(*editor, 1, "ledBlinkOn")); },
+                      "A parameter-locked note never blinked off");
+    pumpMessagesUntil([&] { return static_cast<bool>(padLight(*editor, 1, "ledBlinkOn")); },
+                      "A parameter-locked note never blinked back on");
+    check(stateOf(processor) == unchangedProject, "Blinking TRIG lights changed the project");
+    check(static_cast<bool>(component<juce::Button>(*editor, "seq-page-1").getProperties()["ledAvailable"])
+              && static_cast<bool>(component<juce::Button>(*editor, "seq-page-2").getProperties()["ledAvailable"])
+              && !static_cast<bool>(component<juce::Button>(*editor, "seq-page-3").getProperties()["ledAvailable"]),
+          "Page lights did not reflect the selected track's 32-step length");
+    click(*editor, "sequencer-page-next");
+    check(component<juce::Button>(*editor, "seq-page-2").getToggleState(), "PAGE did not advance to page 2");
+    click(*editor, "sequencer-page-next");
+    check(component<juce::Button>(*editor, "seq-page-1").getToggleState(),
+          "PAGE did not wrap after the final available page");
+    click(*editor, "seq-page-8");
+    check(component<juce::Button>(*editor, "seq-page-8").getToggleState()
+              && stateOf(processor) == unchangedProject,
+          "Selecting an unused page modified the pattern or prevented editing longer patterns");
+    click(*editor, "seq-page-1");
+    host.set(0, 120, true);
+    process(processor, 17); // Establish the pattern origin on its first transport start.
+    host.set(5.25, 120, true); // Sixteenth step 22 is pad 6 on the second page.
+    process(processor, 17);
+    check(processor.getCurrentStep(0) == 21, "Host fixture did not reach step 22");
+    pumpMessagesUntil([&]
+    {
+        return static_cast<bool>(component<juce::Button>(*editor, "seq-page-2").getProperties()["ledPlaying"]);
+    }, "Playing page marker did not follow the host's PPQ position");
+    for (int pad = 0; pad < 16; ++pad)
+        check(!padCursor(*editor, pad), "GRID showed a playhead belonging to another page");
+    click(*editor, "seq-page-2");
+    check(padCursor(*editor, 5) && padLight(*editor, 5, "ledColour").toString() == "white",
+          "GRID did not light the current step's numbered key white");
+    for (int pad = 0; pad < 16; ++pad)
+        if (pad != 5) check(!padCursor(*editor, pad), "GRID displayed more than one current step");
+    click(*editor, "edit-grid");
+    click(*editor, "seq-page-1");
+    check(padLight(*editor, 5, "ledMode").toString() == "play" && padCursor(*editor, 5),
+          "Outside GRID, the cursor stopped traversing the 16 numbered keys across pages");
+    check(stateOf(processor) == unchangedProject, "Playhead/page/record-mode display mutated the musical project");
+    host.set(5.25, 120, false);
+    process(processor, testBlock);
+    pumpMessagesUntil([&] { return !padCursor(*editor, 5); }, "TRIG playhead remained lit after host stop");
+    check(!static_cast<bool>(component<juce::Button>(*editor, "seq-page-2").getProperties()["ledPlaying"]),
+          "Playing page remained active after host stop");
+    processor.setParameter("hostSync", 0);
+    processor.setParameter("play", 1);
+    processor.prepareToPlay(testRate, testBlock);
+    for (int block = 0; block < 12; ++block) process(processor, testBlock);
+    check(processor.getCurrentStep(0) == 1, "Internal clock fixture did not reach step 2");
+    pumpMessagesUntil([&] { return padCursor(*editor, 1); }, "Numbered lights did not follow the internal clock");
+    processor.setParameter("play", 0);
+    process(processor, testBlock);
+    pumpMessagesUntil([&] { return !padCursor(*editor, 1); }, "TRIG playhead remained lit after internal stop");
+    processor.setPlayHead(nullptr);
+    passed("TRIG note/lock palette and blink are read-only; numbered white cursor follows host/internal clocks and page rules");
+}
+
+void testPadModesAndMutes()
+{
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
+    configureDry(processor);
+    for (int track = 0; track < takt::numTracks; ++track) processor.clearTrack(track);
+    processor.prepareToPlay(testRate, testBlock);
+    std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
+    auto* panel = dynamic_cast<TaktAudioProcessorEditor*>(editor.get());
+    check(panel != nullptr, "Cannot inspect sequencer keyboard gestures");
+    const auto key = [&](char character, int modifiers = 0)
+    {
+        check(panel->keyPressed(juce::KeyPress(static_cast<int>(character),
+                                              juce::ModifierKeys(modifiers), character), panel),
+              "A numbered-key sequencer gesture was not handled");
+    };
+    const auto selectedTrackIs = [&](int track)
+    {
+        return component<juce::Slider>(*editor, "track-level").getProperties()["parameterID"].toString()
+            == TaktAudioProcessor::trackParameterID(track, "gain");
+    };
+    const auto originalPattern = patternOf(processor);
+    const auto originalProject = stateOf(processor);
+    const auto originalSerials = processor.getUiSnapshot(0, 0, 0, 0).triggerSerials;
+    click(*editor, "track-select-modifier");
+    check(padLight(*editor, 0, "ledMode").toString() == "track-select"
+              && padLight(*editor, 0, "ledBaseColour").toString() == "red",
+          "TRK did not expose the selected track on the numbered keys");
+    click(*editor, "trig-9");
+    process(processor, testBlock);
+    check(selectedTrackIs(8) && stateOf(processor) == originalProject
+              && processor.getUiSnapshot(8, 0, 0, 0).triggerSerials == originalSerials,
+          "TRK selection in GRID auditioned a sample or edited a trig");
+    click(*editor, "edit-grid");
+    click(*editor, "track-select-modifier");
+    key('2');
+    process(processor, testBlock);
+    check(selectedTrackIs(1) && stateOf(processor) == originalProject
+              && processor.getUiSnapshot(1, 0, 0, 0).triggerSerials == originalSerials,
+          "Keyboard TRK selection outside GRID was not silent");
+    click(*editor, "func-modifier");
+    click(*editor, "track-select-modifier");
+    for (int pad = 0; pad < 16; ++pad)
+        check(padLight(*editor, pad, "ledMode").toString() == "mute"
+                  && padLight(*editor, pad, "ledBaseColour").toString() == "green",
+              "FUNC+TRK did not latch a green unmuted-track view");
+    click(*editor, "trig-6");
+    check(processor.parameterValue("t6_mute") == 1 && selectedTrackIs(1),
+          "A mute-mode key selected/edited a track instead of muting it");
+    check(padLight(*editor, 5, "ledMode").toString() == "mute"
+              && static_cast<bool>(padLight(*editor, 5, "ledMuted"))
+              && padLight(*editor, 5, "ledBaseColour").toString() == "off",
+          "Mute mode did not remain latched or darken the muted key");
+    key('q');
+    check(processor.parameterValue("t9_mute") == 1 && selectedTrackIs(1),
+          "Keyboard mute keys did not address the same tracks as the pads");
+    checkPattern(processor, originalPattern);
+    click(*editor, "navigation-no");
+    check(padLight(*editor, 0, "ledMode").toString() == "play"
+              && processor.parameterValue("t6_mute") == 1 && processor.parameterValue("t9_mute") == 1,
+          "NO did not leave mute mode while preserving the mute choices");
+    click(*editor, "func-modifier");
+    click(*editor, "trig-4");
+    check(processor.parameterValue("t4_mute") == 1 && selectedTrackIs(1)
+              && !component<juce::Button>(*editor, "func-modifier").getToggleState(),
+          "FUNC+pad outside GRID did not perform a quick mute and release FUNC");
+    checkPattern(processor, originalPattern);
+    key('8', juce::ModifierKeys::shiftModifier);
+    process(processor, testBlock);
+    check(selectedTrackIs(7) && processor.getUiSnapshot(7, 0, 0, 0).triggerSerials == originalSerials,
+          "Shift+number outside GRID auditioned the silently selected track");
+    click(*editor, "edit-grid");
+    click(*editor, "track-select-modifier");
+    key('1');
+    check(selectedTrackIs(0), "Keyboard TRK selection did not return to track 1 in GRID");
+    click(*editor, "func-modifier");
+    click(*editor, "trig-4");
+    const auto lock = processor.getStep(0, 3);
+    check(lock.lockTrig && !lock.enabled && processor.parameterValue("t4_mute") == 1,
+          "FUNC+pad in GRID muted a track instead of creating a yellow lock trig");
+    click(*editor, "func-modifier");
+    key('q');
+    check(processor.getStep(0, 8).lockTrig && processor.parameterValue("t9_mute") == 1,
+          "Keyboard FUNC+pad in GRID did not follow the mouse lock-trig gesture");
+    auto expectedPattern = originalPattern;
+    expectedPattern[0][3] = lock;
+    expectedPattern[0][8] = processor.getStep(0, 8);
+    checkPattern(processor, expectedPattern);
+    passed("TRK selects silently; latched/quick mutes and GRID lock trigs use the same mouse/keyboard mode rules");
+}
+
+void testShortTriggerLights(const juce::File& directory)
+{
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
+    configureDry(processor);
+    for (int track = 0; track < takt::numTracks; ++track) processor.clearTrack(track);
+    juce::String error;
+    const auto tinySample = makeWave(directory, "short-led-trigger", 1, 16);
+    check(processor.loadSample(0, tinySample, error), error.toStdString());
+    processor.prepareToPlay(testRate, testBlock);
+    std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
+    click(*editor, "edit-grid");
+    const auto originalProject = stateOf(processor);
+    const auto before = processor.getUiSnapshot(0, 0, 0, 0).triggerSerials[0];
+    check(magnitude(process(processor, testBlock, note(36))) > 0,
+          "Short sample fixture did not render a MIDI trigger");
+    const auto after = processor.getUiSnapshot(0, 0, 0, 0);
+    check(after.triggerSerials[0] == before + 1 && !after.currentTrigEnabled[0],
+          "A short MIDI note was not reported independently of sequencer-step activity");
+    pumpMessagesUntil([&] { return static_cast<bool>(padLight(*editor, 0, "ledPulse")); },
+                      "A sample finishing within one audio block never flashed its numbered key");
+    pumpMessagesUntil([&] { return !static_cast<bool>(padLight(*editor, 0, "ledPulse")); },
+                      "A completed sample left its activity light stuck on");
+    check(stateOf(processor) == originalProject, "MIDI activity lights changed the musical project");
+    click(*editor, "trig-1");
+    process(processor, testBlock);
+    check(processor.getUiSnapshot(0, 0, 0, 0).triggerSerials[0] == after.triggerSerials[0] + 1,
+          "A pad audition did not publish actual track activity");
+    pumpMessagesUntil([&] { return static_cast<bool>(padLight(*editor, 0, "ledPulse")); },
+                      "A pad audition did not flash its numbered key");
+    processor.setParameter("t1_mute", 1);
+    process(processor, testBlock);
+    pumpMessagesUntil([&] { return !static_cast<bool>(padLight(*editor, 0, "ledPulse")); },
+                      "A muted track kept an old activity pulse");
+    const auto mutedBefore = processor.getUiSnapshot(0, 0, 0, 0).triggerSerials[0];
+    process(processor, testBlock, note(36));
+    const auto mutedAfter = processor.getUiSnapshot(0, 0, 0, 0);
+    check(mutedAfter.triggerSerials[0] == mutedBefore && mutedAfter.trackMuted[0],
+          "A muted note generated false track activity");
+    check(!static_cast<bool>(padLight(*editor, 0, "ledPulse")), "A muted note flashed a false activity light");
+    processor.setParameter("t1_mute", 0);
+    process(processor, testBlock);
+    const auto beforeReopen = stateOf(processor);
+    const auto previousActivity = processor.getUiSnapshot(0, 0, 0, 0).triggerSerials[0];
+    check(previousActivity > 0, "Editor reopen fixture has no previous trigger activity");
+    editor.reset();
+    editor.reset(processor.createEditor());
+    click(*editor, "edit-grid");
+    check(!static_cast<bool>(padLight(*editor, 0, "ledPulse"))
+              && padLight(*editor, 0, "ledColour").toString() == "off",
+          "Reopening a stopped editor replayed an old trigger as a new red pulse");
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+    check(!static_cast<bool>(padLight(*editor, 0, "ledPulse"))
+              && processor.getUiSnapshot(0, 0, 0, 0).triggerSerials[0] == previousActivity
+              && stateOf(processor) == beforeReopen,
+          "The reopened editor's first timer tick fabricated track activity or changed the project");
+    passed("short MIDI and pad triggers flash numbered keys even after sample end; pulses expire and muted notes stay dark");
+}
+
+void testMutedTrackLampClock()
+{
+    auto processorStorage = std::make_unique<TaktAudioProcessor>();
+    auto& processor = *processorStorage;
+    configureDry(processor);
+    for (int track = 0; track < takt::numTracks; ++track) processor.clearTrack(track);
+    processor.setParameter("t1_speedIndex", 4); // Normal speed, selected track.
+    processor.setParameter("t2_speedIndex", 6); // Twice the speed of track 1.
+    processor.setParameter("t2_mute", 1);
+    takt::Step mutedNote;
+    mutedNote.enabled = true; mutedNote.advanced = true;
+    processor.setStep(1, 1, mutedNote);
+    TestPlayHead host;
+    host.set(0, 120, false);
+    processor.setParameter("hostSync", 1);
+    processor.setPlayHead(&host);
+    processor.prepareToPlay(testRate, testBlock);
+    process(processor, testBlock);
+    std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
+    click(*editor, "func-modifier");
+    click(*editor, "track-select-modifier");
+    check(padLight(*editor, 1, "ledColour").toString() == "off", "A stopped muted track was not dark");
+    const auto unchangedProject = stateOf(processor);
+    const auto unchangedPattern = patternOf(processor);
+    host.set(0, 120, true);
+    process(processor, 17); // Start the pattern before seeking to the independent track steps.
+    host.set(.125, 120, true);
+    process(processor, 17);
+    const auto position = processor.getUiSnapshot(0, 0, 0, 0);
+    check(position.currentSteps[0] == 0 && position.currentSteps[1] == 1
+              && position.currentTrigEnabled[1] && position.trackMuted[1],
+          "Independent track-speed fixture did not reach the muted track's odd-numbered step");
+    pumpMessagesUntil([&] { return padLight(*editor, 1, "ledColour").toString() == "green"; },
+                      "A muted track's own note position did not flash its number green");
+    pumpMessagesUntil([&] { return padLight(*editor, 1, "ledColour").toString() == "off"; },
+                      "A muted note light stayed green while the selected track's even step remained unchanged");
+    check(processor.getUiSnapshot(0, 0, 0, 0).currentSteps == position.currentSteps,
+          "Muted lamp expiry test advanced the audio clock instead of expiring the pulse");
+    check(stateOf(processor) == unchangedProject, "Muted note indication edited the musical project");
+    checkPattern(processor, unchangedPattern);
+    processor.setTrackLength(1, 1);
+    processor.setStep(1, 0, mutedNote);
+    const auto oneStepProject = stateOf(processor);
+    const auto oneStepPattern = patternOf(processor);
+    host.set(.25, 120, true);
+    process(processor, 17);
+    check(processor.getCurrentStep(1) == 0, "One-step muted track did not wrap to its only note");
+    pumpMessagesUntil([&] { return padLight(*editor, 1, "ledColour").toString() == "green"; },
+                      "One-step muted track did not flash on its first loop");
+    pumpMessagesUntil([&] { return padLight(*editor, 1, "ledColour").toString() == "off"; },
+                      "One-step muted track's first loop light did not expire");
+    host.set(.375, 120, true);
+    process(processor, 17);
+    check(processor.getCurrentStep(1) == 0, "One-step muted track changed its wrapped step on the next loop");
+    pumpMessagesUntil([&] { return padLight(*editor, 1, "ledColour").toString() == "green"; },
+                      "One-step muted track failed to flash again when the wrapped step remained zero");
+    pumpMessagesUntil([&] { return padLight(*editor, 1, "ledColour").toString() == "off"; },
+                      "One-step muted track's next loop light did not expire");
+    check(stateOf(processor) == oneStepProject, "Repeated one-step mute pulses changed the project");
+    checkPattern(processor, oneStepPattern);
+    processor.setPlayHead(nullptr);
+    passed("muted note lights use each track's own speed, expire at fixed positions and recur on one-step loops");
+}
+
 void checkEditorGeometry(juce::AudioProcessorEditor& editor, const juce::String& context)
 {
     std::vector<juce::Component*> controls;
@@ -2999,6 +3313,25 @@ void testGui(const juce::File& png)
     writeEditorSnapshot(*editor, sibling("help"));
     click(*editor, "navigation-help");
     inspectPage("Help closed");
+    TestPlayHead host;
+    processor.setParameter("hostSync", 1);
+    processor.setPlayHead(&host);
+    host.set(0, 120, true);
+    process(processor, 17);
+    host.set(.75, 120, true);
+    process(processor, 257);
+    pumpMessagesUntil([&] { return padCursor(*editor, 3); }, "Cannot capture the playing sequencer lights");
+    inspectPage("Sequencer playing");
+    writeEditorSnapshot(*editor, sibling("seq-play"));
+    click(*editor, "func-modifier");
+    click(*editor, "track-select-modifier");
+    click(*editor, "trig-6");
+    inspectPage("Mute mode");
+    writeEditorSnapshot(*editor, sibling("mute"));
+    click(*editor, "navigation-no");
+    host.set(.75, 120, false);
+    process(processor, testBlock);
+    processor.setPlayHead(nullptr);
     editor.reset();
     passed("GUI pages fit at minimum/default/maximum sizes; controls do not overlap and remain reachable; PNG gallery rendered");
     std::cout << "PNG: " << png.getFullPathName() << std::endl;
@@ -3334,6 +3667,10 @@ int main(int argc, char** argv)
             testDestinationPreviewAcrossAudioTransition(mono);
             testArrangementEditor(mono);
             testEditorKeyboard();
+            testSequencerLights();
+            testPadModesAndMutes();
+            testShortTriggerLights(temporary.directory);
+            testMutedTrackLampClock();
             testGui(screenshot);
         }
         else std::cout << "SKIP: GUI screenshot (enable with --gui editor.png)" << std::endl;

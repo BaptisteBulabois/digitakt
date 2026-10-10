@@ -135,6 +135,29 @@ int main()
             juce::MidiBuffer none;
             measuredBlock(*processor, audio, none, "First prepared processBlock");
 
+            const auto initialActivity = processor->getUiSnapshot(0, 0, 0, 0);
+            require(initialActivity.triggerSerials[0] == 0, "An idle processor published a false trigger pulse");
+            require(initialActivity.absoluteSteps[0] == 0, "An idle processor published a nonzero absolute step position");
+            juce::MidiBuffer shortNote;
+            shortNote.addEvent(juce::MidiMessage::noteOn(1, 36, juce::uint8(110)), 0);
+            shortNote.addEvent(juce::MidiMessage::noteOff(1, 36), 1);
+            measuredBlock(*processor, audio, shortNote, "Short MIDI trigger activity publication");
+            const auto midiActivity = processor->getUiSnapshot(0, 0, 0, 0);
+            require(midiActivity.triggerSerials[0] == 1 && midiActivity.triggerSerials[1] == 0,
+                    "UI did not receive exactly the short MIDI note-on, independently of note-off and polling rate");
+            processor->setParameter("t1_mute", 1);
+            shortNote.addEvent(juce::MidiMessage::noteOn(1, 36, juce::uint8(110)), 0);
+            measuredBlock(*processor, audio, shortNote, "Muted MIDI activity publication");
+            const auto mutedActivity = processor->getUiSnapshot(0, 0, 0, 0);
+            require(mutedActivity.triggerSerials[0] == 1 && mutedActivity.trackMuted[0],
+                    "Muted notes must publish mute state without producing an activity pulse");
+            processor->setParameter("t1_mute", 0);
+            processor->triggerTrack(0);
+            measuredBlock(*processor, audio, none, "Manual trigger activity publication");
+            const auto manualActivity = processor->getUiSnapshot(0, 0, 0, 0);
+            require(manualActivity.triggerSerials[0] == 2 && !manualActivity.trackMuted[0],
+                    "Manual audition must publish an actual trigger pulse and the effective unmuted state");
+
             // A long ignored SysEx used to allocate through MidiMessage's
             // owning copy before the processor decided to ignore it.
             std::array<juce::uint8, 1024> sysex{};

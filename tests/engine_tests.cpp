@@ -1092,6 +1092,70 @@ void testOrderedAndUnorderedMidiCursor()
     require(energy(reversed.left, 200, 650) > .01,
             "equal-offset MIDI is evaluated in caller order, rather than sorting notes by type");
 }
+
+void testActualTriggerActivityCounters()
+{
+    auto storage = std::make_unique<Engine>(); auto& engine = *storage;
+    initialise(engine, constant(2), 37);
+    require(engine.getTriggerSerial(0) == 0 && engine.getTriggerSerial(-1) == 0
+            && engine.getTriggerSerial(numTracks) == 0, "trigger counters start empty and validate track indices");
+    Audio audio(256);
+    const TriggerEvent shortNotes[] = {
+        {0, 0, 1.0f}, {1, 0, 0, 0, 60, 0, false, true},
+        {100, 0, .5f}, {101, 0, 0, 0, 60, 0, false, true},
+        {150, 0, 0}, {200, 1, 1.0f}, {210, numTracks, 1.0f}
+    };
+    allocations = deallocations = 0; countAllocations = true;
+    engine.process(audio.left.data(), audio.right.data(), 256, {}, shortNotes, std::size(shortNotes));
+    countAllocations = false;
+    require(allocations == 0 && deallocations == 0, "actual trigger activity tracking allocates and frees no memory");
+    require(engine.getTriggerSerial(0) == 2 && engine.getTriggerSerial(1) == 0,
+            "short note-on/off pairs remain observable after ending; releases, zero velocity and missing samples do not pulse");
+    engine.reset(); engine.restartSequencer(); engine.prepare(sampleRate, 37);
+    require(engine.getTriggerSerial(0) == 2, "activity serials remain monotonic across reset, restart and prepare");
+    auto muted = dry(); muted.mute = true; engine.setTrackParams(0, muted);
+    const TriggerEvent manual{0, 0, 1.0f};
+    engine.process(audio.left.data(), audio.right.data(), 256, {}, &manual, 1);
+    require(engine.getTriggerSerial(0) == 2 && engine.isTrackMuted(0), "muted manual notes do not pulse");
+
+    initialise(engine);
+    engine.setTrackLength(0, 4);
+    Step note; note.enabled = note.advanced = true; engine.setStep(0, 0, note);
+    Step lock; lock.advanced = lock.lockTrig = lock.lockPitch = true;
+    lock.pitch = 12; engine.setStep(0, 1, lock);
+    auto fill = note; fill.rule.fill = sequencer::Fill::On; engine.setStep(0, 2, fill);
+    auto rejected = note; rejected.probability = 0; engine.setStep(0, 3, rejected);
+    engine.setSample(1, constant()); engine.setTrackParams(1, muted); engine.setStep(1, 0, note);
+    engine.setStep(2, 0, note); // No sample on this track.
+    engine.setSample(3, constant()); auto zero = note; zero.velocity = 0; engine.setStep(3, 0, zero);
+    sequenceAudio(engine, 24000, 97, true);
+    require(engine.getTriggerSerial(0) == 3 && engine.getTriggerSerial(1) == 0
+            && engine.getTriggerSerial(2) == 0 && engine.getTriggerSerial(3) == 0,
+            "only the accepted sequencer note pulses; lock-only, refused FILL, probability zero, mute and zero velocity do not");
+    engine.reset(); engine.setFill(true);
+    sequenceAudio(engine, 24000, 97, true);
+    require(engine.getTriggerSerial(0) == 5, "successful FILL notes increment activity along with ordinary notes");
+
+    engine.reset(); engine.setTrackLength(0, 16);
+    for (int step = 1; step < 4; ++step) engine.setStep(0, step, {});
+    note.retrig.enabled = true; note.retrig.rateIndex = 12; note.noteLengthBeats = 1;
+    engine.setStep(0, 0, note);
+    sequenceAudio(engine, 24000, 97, true);
+    require(engine.getTriggerSerial(0) == 13, "all eight actual retrigger notes increment activity across process blocks");
+
+    engine.reset(); engine.setTrackLength(0, 1); engine.setTrackParams(0, muted);
+    Audio cycle(6000);
+    Transport clock; clock.playing = true;
+    for (std::int64_t absolute = 0; absolute < 3; ++absolute)
+    {
+        engine.process(cycle.left.data(), cycle.right.data(), 6000, clock);
+        require(engine.getCurrentStep(0) == 0 && engine.getAbsoluteStep(0) == absolute,
+                "a one-step muted track reports each successive absolute cycle while its wrapped step remains zero");
+    }
+    require(engine.getTriggerSerial(0) == 13, "absolute muted step activity never changes actual note-trigger counters");
+    engine.restartSequencer();
+    require(engine.getAbsoluteStep(0) == 0, "sequencer restart resets its absolute step position");
+}
 }
 
 int main()
@@ -1123,7 +1187,8 @@ int main()
         {"integrated BR/SRR/OD routing, chorus and send-effect tails",testIntegratedTrackFxAndChorusRouting},
         {"complete 16-track DSP allocation/free stress and invalid controls",testCompleteDspRealtimeAndInvalidControls},
         {"bounded master saturation, numerical accuracy and finite extremes",testMasterSaturationNumerics},
-        {"sorted MIDI cursor, unsorted fallback and equal-offset note ordering",testOrderedAndUnorderedMidiCursor}
+        {"sorted MIDI cursor, unsorted fallback and equal-offset note ordering",testOrderedAndUnorderedMidiCursor},
+        {"actual short-note activity, condition rejection, lock-only and retrig counters",testActualTriggerActivityCounters}
     };
     int failed=0;
     for (const auto& test:tests)

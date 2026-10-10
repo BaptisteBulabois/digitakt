@@ -1,4 +1,4 @@
-# Takt II 0.3.2 — branche de développement
+# Takt II 0.3.3 — branche de développement
 
 Cette branche conserve `main` et la version stable 0.2.0. Elle étend le panneau
 fourni par l'utilisateur et les workflows décrits dans le manuel Digitakt II
@@ -11,6 +11,41 @@ de PAGE. Glisser un codeur pour régler sa valeur ; celle-ci apparaît aussi
 au survol. Les outils conservent leurs champs numériques. Les panneaux
 d'outils et d'arrangement masquent les commandes qu'ils recouvrent ; NO
 les ferme. Les détails sont dans [UI_REWORK_0_3_2.md](UI_REWORK_0_3_2.md).
+
+## Lumières et touches du séquenceur
+
+Avec **REC activé (GRID)**, les numéros rouges signalent les note trigs, les
+jaunes les lock trigs et les numéros sombres les pas vides. Les trigs ayant
+des locks de pitch, cutoff ou slice clignotent. Un clic court ajoute/retire
+le trig ; maintenir la touche permet son édition. **FUNC puis un pad** ajoute
+un lock trig. Le curseur blanc suit le pas joué sur la page affichée ; choisir
+une autre page pour éditer ne déplace pas la lecture.
+
+Avec **REC désactivé**, les pads jouent les pistes. Le curseur blanc parcourt
+les seize numéros pendant la lecture, même au passage à une autre page. Les
+flashes rouges signalent des notes réellement déclenchées, y compris une note
+MIDI ou un sample très court. Une condition refusée ne produit pas de flash
+rouge ; le curseur continue de représenter l'horloge.
+
+**TRK puis un pad** sélectionne une piste silencieusement ; sa touche devient
+rouge pendant la sélection. **FUNC puis TRK** ouvre/ferme MUTE : vert signifie
+non muet, sombre signifie muet. Les pads changent le mute sans éditer de trig
+ni sélectionner une autre piste. **NO** quitte ce mode. Hors GRID, **FUNC puis
+un pad** permet aussi un quick mute. Les raccourcis clavier suivent les mêmes
+règles : 1–8 et QWERTYUI, Shift pour sélectionner sans jouer/éditer.
+
+**PAGE** parcourt les pages disponibles de la piste. La page d'édition reste
+allumée et celle de lecture clignote. Les LED inutilisées sont atténuées ;
+elles restent directement sélectionnables pour préparer une extension de
+longueur. Les voyants suivent le transport et la position de Live en HOST
+SYNC, et l'horloge interne autrement.
+
+Cette version réutilise le mute de piste existant, conservé avec le pattern ;
+les deux couches matérielles GLOBAL/PATTERN et les mutes préparés restent à
+implémenter. Le curseur blanc, le clignotement des locks toutes les 180 ms et
+les flashes de note de 100 ms sont des adaptations visuelles : leur teinte et
+leur durée exactes ne sont pas définies dans le manuel. Les références sont
+dans [TRIG_LIGHTS_REFERENCE.md](reference/TRIG_LIGHTS_REFERENCE.md).
 
 ## Préserver l'installation stable
 

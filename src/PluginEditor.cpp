@@ -10,6 +10,7 @@ const juce::Colour background{0xff111214}, panelColour{0xff252628};
 const juce::Colour inset{0xff151618}, border{0xff36383b};
 const juce::Colour ink{0xffe6e5df}, mutedInk{0xff90918f}, accent{0xffedb43f};
 const juce::Colour trigRed{0xffed514d};
+const juce::Colour muteGreen{0xff64d28b};
 juce::Font font(float size, bool bold = false)
 {
     return juce::Font(juce::FontOptions(size, bold ? juce::Font::bold : juce::Font::plain));
@@ -97,7 +98,12 @@ public:
         auto r = button.getLocalBounds().toFloat().reduced(0.5f);
         if (button.getComponentID().startsWith("seq-page-"))
         {
-            g.setColour(button.getToggleState() ? trigRed : juce::Colour(0xff302424));
+            const bool available = button.getProperties()["ledAvailable"];
+            const bool playing = button.getProperties()["ledPlaying"];
+            const bool blink = button.getProperties()["ledBlinkOn"];
+            g.setColour(playing ? (blink ? trigRed.brighter(.25f) : juce::Colour(0xff302424))
+                               : button.getToggleState() ? trigRed
+                               : available ? trigRed.withBrightness(.30f) : juce::Colour(0xff1b1c1d));
             g.fillEllipse(r.reduced(2));
             g.setColour(over ? ink : juce::Colour(0xff18191a));
             g.drawEllipse(r.reduced(2), 1.0f);
@@ -309,21 +315,27 @@ public:
     void paintButton(juce::Graphics& g, bool over, bool down) override
     {
         auto r = getLocalBounds().toFloat().reduced(1.0f);
-        const auto lit = lockOnly ? accent : trigRed;
         g.setColour(juce::Colour(0xff090a0b)); g.fillRoundedRectangle(r, 6.0f);
         r = r.reduced(3.0f);
-        g.setColour(enabled ? lit.withAlpha(over || down ? 0.48f : 0.20f) : (over ? border : juce::Colour(0xff252b31)));
+        const auto lit = ledColour == "white" ? ink : ledColour == "green" ? muteGreen
+                       : ledColour == "yellow" ? accent : trigRed;
+        const bool illuminated = ledColour != "off";
+        g.setColour(illuminated ? lit.withAlpha(over || down ? .25f : .12f)
+                               : over || down ? border : juce::Colour(0xff252b31));
         g.fillRoundedRectangle(r, 4.0f);
         g.setColour(selected ? ink.withAlpha(0.8f) : border);
         g.drawRoundedRectangle(r, 4.0f, selected ? 1.5f : 1.0f);
-        drawCaption(g, number(index % 16 + 1), {0, 13, getWidth(), 27}, 22.0f,
-             withinLength ? (playing ? accent : enabled ? lit : ink) : mutedInk.darker(), true, juce::Justification::centred);
-        if (hasLock && grid) drawCaption(g, "LOCK", {0, 43, getWidth(), 12}, 8.0f, accent, true, juce::Justification::centred);
-        if (playing)
+        const juce::Rectangle<int> numberBounds{0, 17, getWidth(), 30};
+        if (illuminated)
         {
-            g.setColour(accent);
-            g.fillRoundedRectangle(5.0f, static_cast<float>(getHeight() - 5), static_cast<float>(getWidth() - 10), 2.5f, 1.0f);
+            // The LED is inside the numeral, as on the hardware. A soft halo
+            // keeps its colour legible without adding an unrelated progress bar.
+            for (const auto offset : {juce::Point<int>{-1, 0}, {1, 0}, {0, -1}, {0, 1}})
+                drawCaption(g, juce::String(index % 16 + 1), numberBounds.translated(offset.x, offset.y),
+                            22.0f, lit.withAlpha(.12f), true, juce::Justification::centred);
         }
+        drawCaption(g, juce::String(index % 16 + 1), numberBounds, 22.0f,
+                    illuminated ? lit : mutedInk.darker(.60f), true, juce::Justification::centred);
         if (!withinLength)
         {
             g.setColour(background.withAlpha(0.5f));
@@ -346,6 +358,8 @@ public:
     { if (onStepClick && (!holdEditing || juce::Time::getMillisecondCounterHiRes() - downAt < 250.0)) onStepClick(true); }
     int index;
     bool enabled = false, selected = false, playing = false, hasLock = false, withinLength = true, grid = true, lockOnly = false;
+    juce::String ledColour = "off", ledBaseColour = "off", ledMode = "grid";
+    bool ledBlinkOn = true, ledPulse = false, ledMuted = false;
     std::function<void(bool)> onStepClick;
     std::function<bool()> onBeginHold;
     std::function<void()> onEndHold;
@@ -512,7 +526,8 @@ TaktAudioProcessorEditor::TaktAudioProcessorEditor(TaktAudioProcessor& p)
     addButton(undoButton, false, "edit-undo", "Undo the last paste or clear, while no intermediate musical edit has invalidated it. Ctrl+Z.");
     addButton(temporarySaveButton, false, "pattern-temp-save", "Remember sounds, samples, sequence, tempo, swing and effects for this session. Does not save the Live project or transport/master settings.");
     addButton(temporaryReloadButton, false, "pattern-temp-reload", "Restore the temporary checkpoint, or the last recalled/initial pattern when none was saved. Transport and master level stay unchanged.");
-    addButton(funcButton, true, "func-modifier", "Click to latch FUNC for the next command: REC copies, PLAY clears, STOP pastes, YES saves temporarily, NO reloads. Click again to release.");
+    addButton(funcButton, true, "func-modifier", "Latch FUNC: REC copies, PLAY clears, STOP pastes, YES saves, NO reloads. FUNC+TRK opens MUTE; FUNC+pad adds a lock in GRID or quick-mutes outside GRID.");
+    funcButton.onClick = [this] { refreshSteps(); panel->repaint(152, 99, 289, 200); };
     funcButton.setColour(juce::TextButton::buttonColourId, accent);
     funcButton.setColour(juce::TextButton::textColourOffId, background);
     addButton(stopButton, false, "transport-stop", "Pause the internal sequencer without resetting its position or cutting tails. With host sync, use the DAW transport. FUNC+STOP pastes the selected scope.");
@@ -522,7 +537,7 @@ TaktAudioProcessorEditor::TaktAudioProcessorEditor(TaktAudioProcessor& p)
     sourceImportButton.onClick = [this] { if (processor.isSampleImportPending(selectedTrack)) cancelSelectedImport(); else chooseSample(); };
     addButton(fillButton, true, "sequencer-fill", "Latch FILL mode. Trigs set to FILL ON/OFF follow this musical condition; independent of the host transport.");
     fillButton.onClick = [this] { processor.setParameter("fill", fillButton.getToggleState() ? 1.0f : 0.0f); };
-    addButton(pageButton, false, "sequencer-page-next", "Cycle the eight sequencer pages. LEDs above are clickable for direct page selection.");
+    addButton(pageButton, false, "sequencer-page-next", "Cycle this track's available pages. The playing page flashes; the edit page stays lit. Click an LED directly to edit any of the eight pages.");
     addButton(toolsButton, true, "vst-tools", "Open software utilities: tempo, swing, length, clipboard scope, demo and selected-track controls.");
     addButton(leftButton, false, "navigation-left", "Previous sequencer page.");
     addButton(rightButton, false, "navigation-right", "Next sequencer page.");
@@ -659,23 +674,11 @@ TaktAudioProcessorEditor::TaktAudioProcessorEditor(TaktAudioProcessor& p)
         pad->setComponentID("trig-" + juce::String(i + 1)); pad->addKeyListener(this);
         pad->onBeginHold = [this, i]
         {
-            if (view == View::Patterns || view == View::Song || !gridRecording || trkButton.getToggleState() || funcButton.getToggleState()) return false;
+            if (view == View::Patterns || view == View::Song || muteMode || !gridRecording || trkButton.getToggleState() || funcButton.getToggleState()) return false;
             heldStep = selectedPage * 16 + i; selectStep(heldStep, false); return true;
         };
         pad->onEndHold = [this] { heldStep = -1; };
-        pad->onStepClick = [this, i](bool toggle)
-        {
-            if (view == View::Patterns) { selectPatternPad(i); return; }
-            if (view == View::Song) { selectSong(i); return; }
-            if (trkButton.getToggleState()) { finishControlAll(false); selectTrack(i); trkButton.setToggleState(false, juce::dontSendNotification); }
-            else if (gridRecording && funcButton.getToggleState() && toggle)
-            { const auto index = selectedPage * 16 + i; auto step = processor.getStep(selectedTrack, index);
-              step.advanced = true; step.enabled = false; step.lockTrig = !step.lockTrig; processor.setStep(selectedTrack, index, step);
-              funcButton.setToggleState(false, juce::dontSendNotification); selectStep(index, false); }
-            else if (gridRecording) selectStep(selectedPage * 16 + i, toggle);
-            else if (toggle) processor.triggerTrack(i);
-            else selectTrack(i);
-        };
+        pad->onStepClick = [this, i](bool toggle) { handlePad(i, toggle); };
         panel->addAndMakeVisible(*pad);
     }
     for (int i = 0; i < 8; ++i)
@@ -710,7 +713,7 @@ TaktAudioProcessorEditor::TaktAudioProcessorEditor(TaktAudioProcessor& p)
         panel->addAndMakeVisible(*label);
     }
     sampleLabel.setColour(juce::Label::textColourId, ink);
-    helpLabel.setText("MOUSE\nTRK then a pad: select a track silently. The VST strip also selects tracks.\nREC on: pads edit steps; right-click selects without toggling.\nREC off: pads play tracks; right-click selects silently.\nClick a family again or Up/Down to switch its subpage.\n\nFUNC (latched for one command)\nREC: copy  /  PLAY: clear  /  STOP: paste\nYES: temporary save  /  NO: temporary reload  /  FX: send effects\nClipboard scope is selected in VST TOOLS. Repeat paste/clear to undo.\n\nKEYBOARD (editor focused)\n1-8 / Q W E R T Y U I: pads; Shift selects without toggling.\nLeft/Right: sequence page.  [ / ] or Up/Down: parameter subpage.\nSpace: internal play/pause. Ctrl+C / V / Z: copy / paste / undo.\nDelete: clear scope. Escape: back. Shortcuts pause while typing.\n\n* marks an adapted control. Disabled controls are not implemented.\nIn HOST SYNC use Live's transport. STOP pauses without rewinding.", juce::dontSendNotification);
+    helpLabel.setText("MOUSE\nTRK then a pad: select a track silently. The VST strip also selects tracks.\nREC on: pads edit steps; right-click selects without toggling.\nREC off: pads play tracks; right-click selects silently.\nClick a family again or Up/Down to switch its subpage.\n\nFUNC (latched for one command)\nREC: copy  /  PLAY: clear  /  STOP: paste\nYES: temporary save  /  NO: temporary reload  /  FX: send effects\nTRK: MUTE mode; green = unmuted. NO exits MUTE.\nClipboard scope is selected in VST TOOLS. Repeat paste/clear to undo.\n\nKEYBOARD (editor focused)\n1-8 / Q W E R T Y U I: pads; Shift selects without toggling.\nLeft/Right: sequence page.  [ / ] or Up/Down: parameter subpage.\nSpace: internal play/pause. Ctrl+C / V / Z: copy / paste / undo.\nDelete: clear scope. Escape: back. Shortcuts pause while typing.\n\n* marks an adapted control. Disabled controls are not implemented.\nIn HOST SYNC use Live's transport. STOP pauses without rewinding.", juce::dontSendNotification);
     helpLabel.setJustificationType(juce::Justification::topLeft);
     helpLabel.setFont(font(12));
     helpLabel.setColour(juce::Label::textColourId, ink);
@@ -738,22 +741,29 @@ TaktAudioProcessorEditor::TaktAudioProcessorEditor(TaktAudioProcessor& p)
         timerCallback();
     };
     yesButton.onClick = [this] { confirmAction(); };
-    pageButton.onClick = [this] { selectSequencerPage((selectedPage + 1) % 8); };
+    pageButton.onClick = [this]
+    { selectSequencerPage((selectedPage + 1) % juce::jmax(1, (processor.getTrackLength(selectedTrack) + 15) / 16)); };
     leftButton.onClick = [this] { if (view == View::SliceEditor) moveSlice(-1); else if (view == View::Patterns) { selectedBank = (selectedBank + 7) % 8; refreshArrangementControls(); refreshSteps(); } else if (view == View::Song) { songRowSelect.setSelectedId(juce::jmax(1, selectedSongRow), juce::sendNotification); } else selectSequencerPage((selectedPage + 7) % 8); };
     rightButton.onClick = [this] { if (view == View::SliceEditor) moveSlice(1); else if (view == View::Patterns) { selectedBank = (selectedBank + 1) % 8; refreshArrangementControls(); refreshSteps(); } else if (view == View::Song) { songRowSelect.setSelectedId(juce::jmin(songRowSelect.getNumItems(), selectedSongRow + 2), juce::sendNotification); } else selectSequencerPage((selectedPage + 1) % 8); };
     toolsButton.onClick = [this] { if (view == View::Patterns || view == View::Song) view = View::Parameters; toolsVisible = toolsButton.getToggleState(); rebuildControls(); };
     trkButton.onClick = [this]
     {
-        if (funcButton.getToggleState()) { toolsVisible = true; toolsButton.setToggleState(true, juce::dontSendNotification); trkButton.setToggleState(false, juce::dontSendNotification); funcButton.setToggleState(false, juce::dontSendNotification); updateVisibility(); }
+        if (funcButton.getToggleState()) { setMuteMode(!muteMode); }
         else if (trkButton.getToggleState())
-        { if (processor.beginControlAll(selectedTrack)) showStatus("CONTROL ALL: encoder edits affect all audio tracks. NO cancels; click TRK to commit."); }
+        {
+            muteMode = false;
+            if (view == View::Patterns || view == View::Song) showView(View::Parameters);
+            if (processor.beginControlAll(selectedTrack)) showStatus("TRK: choose a track with pads 1-16; encoder edits apply CONTROL ALL. NO cancels.");
+        }
         else finishControlAll(false);
+        refreshSteps(); panel->repaint(152, 99, 289, 200);
     };
     stepToolsButton.onClick = [this] { showView(view == View::StepTools ? View::Parameters : View::StepTools); };
     sendFxButton.onClick = [this] { if (view == View::SendFx) changeParameterPage(1); else showView(View::SendFx); };
     noButton.onClick = [this]
     {
-        if (processor.isControlAllActive()) { finishControlAll(true); trkButton.setToggleState(false, juce::dontSendNotification); }
+        if (muteMode) { setMuteMode(false); }
+        else if (processor.isControlAllActive()) { finishControlAll(true); trkButton.setToggleState(false, juce::dontSendNotification); refreshSteps(); }
         else if (!pendingDestination.isEmpty()) { cancelDestinationPreview(); refreshControls(); showStatus("LFO destination selection cancelled."); }
         else if (funcButton.getToggleState()) { temporaryReloadButton.onClick(); funcButton.setToggleState(false, juce::dontSendNotification); }
         else goBack();
@@ -907,7 +917,9 @@ void TaktAudioProcessorEditor::paintPanel(juce::Graphics& g)
     const auto host = displayedHostClock;
     const auto playing = displayedPlaying;
     const std::array<const char*, 6> familyNames{{"TRIG", "SRC", "FLTR", "AMP", "FX", "MOD"}};
-    const auto context = view == View::Patterns ? juce::String("PATTERNS")
+    const auto context = muteMode ? juce::String("MUTE")
+                       : trkButton.getToggleState() ? juce::String("SELECT TRACK")
+                       : view == View::Patterns ? juce::String("PATTERNS")
                        : view == View::Song ? juce::String("SONG ") + number(selectedSong + 1) + " ROW " + number(selectedSongRow + 1)
                        : view == View::SliceEditor ? juce::String("SLICE ") + juce::String(selectedSlice + 1) + "/" + juce::String(currentSliceCount())
                        : view == View::StepTools ? juce::String("STEP TOOLS")
@@ -947,7 +959,10 @@ void TaktAudioProcessorEditor::paintPanel(juce::Graphics& g)
                      {x, y + (sourceWave ? 11 : 12), 58, sourceWave ? 14 : 17}, sourceWave ? 11 : 12,
                      true, juce::Justification::centredLeft);
         }
-    const auto footer = view == View::SliceEditor ? juce::String(linkedSlicePoints ? "LINKED" : "UNLINKED") + "  SLICE " + juce::String(selectedSlice + 1)
+    const auto footer = muteMode ? juce::String("GREEN=ON  DARK=MUTED")
+        : trkButton.getToggleState() ? juce::String("PADS 1-16 SELECT TRACK")
+        : !gridRecording && view == View::Parameters ? juce::String("PLAY ") + juce::String(playing && displayedCurrentStep >= 0 ? displayedCurrentStep + 1 : 0) + "  LEN " + juce::String(displayedTrackLength)
+        : view == View::SliceEditor ? juce::String(linkedSlicePoints ? "LINKED" : "UNLINKED") + "  SLICE " + juce::String(selectedSlice + 1)
         : view == View::Patterns ? "BANK " + juce::String::charToString(static_cast<juce::juce_wchar>('A' + selectedBank)) + "  SELECT PATTERN"
         : view == View::Song ? "PADS SELECT SONG"
         : view == View::Parameters && family == Family::Source ? number(selectedTrack + 1) + " " + uiSnapshot.sampleName
@@ -978,13 +993,6 @@ void TaktAudioProcessorEditor::paintPanel(juce::Graphics& g)
         drawCaption(g, "PASTE", {341, 456, 60, 13}, 8, accent, false, juce::Justification::centred);
         drawCaption(g, "SAVE", {464, 423, 48, 13}, 8, accent, false, juce::Justification::centred);
         drawCaption(g, "RELOAD", {459, 488, 58, 13}, 8, accent, false, juce::Justification::centred);
-        const auto playedPage = playing && displayedCurrentStep >= 0 ? displayedCurrentStep / 16 : -1;
-        if (playedPage >= 0)
-        {
-            g.setColour(accent);
-            g.drawEllipse(static_cast<float>(750 + (playedPage % 4) * 21),
-                          static_cast<float>(381 + (playedPage / 4) * 21), 15, 15, 1);
-        }
         drawCaption(g, "FILL / SETUP", {746, 488, 87, 13}, 8, accent, false, juce::Justification::centred);
     }
     if (overlay && !helpVisible)
@@ -1551,6 +1559,7 @@ void TaktAudioProcessorEditor::showView(View v)
 {
     if (v == View::Patterns || v == View::Song)
     {
+        muteMode = false;
         cancelDestinationPreview();
         finishControlAll(false); trkButton.setToggleState(false, juce::dontSendNotification);
         toolsVisible = false; toolsButton.setToggleState(false, juce::dontSendNotification);
@@ -1561,7 +1570,8 @@ void TaktAudioProcessorEditor::showView(View v)
 
 void TaktAudioProcessorEditor::goBack()
 {
-    if (processor.isControlAllActive()) { finishControlAll(true); trkButton.setToggleState(false, juce::dontSendNotification); return; }
+    if (muteMode) { setMuteMode(false); return; }
+    if (processor.isControlAllActive()) { finishControlAll(true); trkButton.setToggleState(false, juce::dontSendNotification); refreshSteps(); return; }
     if (!pendingDestination.isEmpty()) { cancelDestinationPreview(); refreshControls(); return; }
     if (helpVisible)
     { helpVisible = false; helpButton.setToggleState(false, juce::dontSendNotification); }
@@ -1569,6 +1579,60 @@ void TaktAudioProcessorEditor::goBack()
     else if (view != View::Parameters) showView(View::Parameters);
     funcButton.setToggleState(false, juce::dontSendNotification); trkButton.setToggleState(false, juce::dontSendNotification);
     updateVisibility(); panel->repaint();
+    refreshSteps();
+}
+
+void TaktAudioProcessorEditor::setMuteMode(bool active)
+{
+    finishControlAll(false);
+    muteMode = active;
+    funcButton.setToggleState(false, juce::dontSendNotification);
+    trkButton.setToggleState(false, juce::dontSendNotification);
+    if (active)
+    {
+        if (view == View::Patterns || view == View::Song) view = View::Parameters;
+        toolsVisible = false; toolsButton.setToggleState(false, juce::dontSendNotification);
+        helpVisible = false; helpButton.setToggleState(false, juce::dontSendNotification);
+        rebuildControls();
+        showStatus("MUTE: green numbers are unmuted. Click 1-16 to mute; FUNC+TRK or NO returns to the sequence.");
+    }
+    else showStatus(gridRecording ? "GRID: pads edit steps; PLAY runs the sequence." : "PLAY: pads trigger tracks; REC opens grid editing.");
+    refreshSteps(); panel->repaint(152, 99, 289, 200);
+}
+
+void TaktAudioProcessorEditor::handlePad(int pad, bool activate)
+{
+    if (pad < 0 || pad >= takt::numTracks) return;
+    if (view == View::Patterns) { selectPatternPad(pad); return; }
+    if (view == View::Song) { selectSong(pad); return; }
+    if (muteMode || (!gridRecording && funcButton.getToggleState() && activate))
+    {
+        if (activate)
+        {
+            const auto id = TaktAudioProcessor::trackParameterID(pad, "mute");
+            processor.setParameter(id, processor.parameterValue(id) >= .5f ? 0.0f : 1.0f);
+            if (!muteMode) funcButton.setToggleState(false, juce::dontSendNotification);
+        }
+    }
+    else if (trkButton.getToggleState())
+    {
+        finishControlAll(false);
+        trkButton.setToggleState(false, juce::dontSendNotification);
+        selectTrack(pad);
+    }
+    else if (gridRecording && funcButton.getToggleState() && activate)
+    {
+        const auto index = selectedPage * 16 + pad;
+        auto step = processor.getStep(selectedTrack, index);
+        step.advanced = true; step.enabled = false; step.lockTrig = !step.lockTrig;
+        processor.setStep(selectedTrack, index, step);
+        funcButton.setToggleState(false, juce::dontSendNotification);
+        selectStep(index, false);
+    }
+    else if (gridRecording) selectStep(selectedPage * 16 + pad, activate);
+    else if (activate) processor.triggerTrack(pad);
+    else selectTrack(pad);
+    refreshSteps(); panel->repaint(152, 99, 289, 200);
 }
 
 void TaktAudioProcessorEditor::selectStep(int step, bool toggle)
@@ -1597,32 +1661,100 @@ void TaktAudioProcessorEditor::refreshSteps()
     const auto current = uiSnapshot.currentSteps[static_cast<std::size_t>(selectedTrack)], length = uiSnapshot.trackLength;
     displayedCurrentStep = current; displayedTrackLength = length;
     const auto playing = processor.isUsingHostClock() ? processor.isHostPlaying() : processor.parameterValue("play") >= 0.5f;
+    const auto now = juce::Time::getMillisecondCounterHiRes();
+    const bool blinkOn = (static_cast<std::uint64_t>(now / 180.0) & 1u) == 0;
+    const bool pageBlinkOn = current >= 0 && (uiSnapshot.absoluteSteps[static_cast<std::size_t>(selectedTrack)] % 2) == 0;
+    if (!activityInitialized)
+    {
+        displayedTriggerSerials = uiSnapshot.triggerSerials;
+        displayedMutePositions = uiSnapshot.absoluteSteps;
+        activityInitialized = true;
+    }
+    for (int i = 0; i < takt::numTracks; ++i)
+    {
+        const auto track = static_cast<std::size_t>(i);
+        if (displayedTriggerSerials[track] != uiSnapshot.triggerSerials[track])
+        { displayedTriggerSerials[track] = uiSnapshot.triggerSerials[track]; trackPulseUntil[track] = now + 100.0; }
+        if (displayedMutePositions[track] != uiSnapshot.absoluteSteps[track])
+        {
+            displayedMutePositions[track] = uiSnapshot.absoluteSteps[track];
+            if (playing && uiSnapshot.currentTrigEnabled[track]) mutePulseUntil[track] = now + 100.0;
+        }
+    }
+    const bool selectingTrack = trkButton.getToggleState();
+    const bool quickMute = !gridRecording && funcButton.getToggleState();
     for (int i = 0; i < 16; ++i)
     {
         auto& pad = *stepPads[static_cast<std::size_t>(i)];
         const auto visualState = [&pad] { return std::make_tuple(pad.index, pad.enabled, pad.selected, pad.playing,
-            pad.hasLock, pad.withinLength, pad.grid, pad.lockOnly); };
+            pad.hasLock, pad.withinLength, pad.grid, pad.lockOnly, pad.ledColour, pad.ledMode,
+            pad.ledBaseColour, pad.ledBlinkOn, pad.ledPulse, pad.ledMuted); };
         const auto previous = visualState(); pad.grid = gridRecording;
+        pad.ledBlinkOn = blinkOn; pad.ledPulse = false; pad.ledMuted = false;
         if (view == View::Patterns || view == View::Song)
         {
             pad.index = i; pad.grid = false; pad.lockOnly = false; pad.withinLength = true; pad.hasLock = false;
             pad.enabled = view == View::Patterns ? uiSnapshot.currentPattern == selectedBank * 16 + i : uiSnapshot.songRowCounts[static_cast<std::size_t>(i)] > 0;
             pad.selected = view == View::Patterns ? uiSnapshot.currentPattern == selectedBank * 16 + i : selectedSong == i;
             pad.playing = view == View::Patterns ? uiSnapshot.queuedPattern == selectedBank * 16 + i : uiSnapshot.currentSong == i && playing;
+            pad.ledMode = view == View::Patterns ? "pattern" : "song";
+            pad.ledBaseColour = pad.enabled ? "red" : "off";
+            pad.ledColour = pad.playing ? (blinkOn ? "red" : "off") : pad.ledBaseColour;
             pad.setTooltip(view == View::Patterns ? "Select " + patternName(selectedBank * 16 + i) + " silently. While playing, it is queued at the pattern boundary." : "Select SONG " + number(i + 1) + " for editing. Use PLAY SONG to activate it.");
-            if (previous != visualState()) pad.repaint();
-            continue;
         }
-        pad.index = gridRecording ? selectedPage * 16 + i : i;
-        const auto& s = uiSnapshot.visibleSteps[static_cast<std::size_t>(i)];
-        pad.enabled = gridRecording && (s.enabled || s.lockTrig); pad.lockOnly = s.lockTrig;
-        pad.selected = gridRecording ? selectedStep == pad.index : selectedTrack == i;
-        pad.playing = playing && gridRecording && current == pad.index; pad.hasLock = s.lockPitch || s.lockCutoff || s.lockSlice;
-        pad.withinLength = !gridRecording || pad.index < length;
-        pad.setTooltip(gridRecording ? "Click to toggle a note. Hold to edit without removing it; right-click selects. FUNC+pad toggles a yellow lock trig." : "Click to play this track. Right-click or modifier-click selects it silently.");
+        else if (muteMode || quickMute || selectingTrack)
+        {
+            pad.index = i; pad.grid = false; pad.lockOnly = false; pad.hasLock = false;
+            pad.withinLength = true; pad.playing = false; pad.selected = selectedTrack == i;
+            pad.ledMuted = processor.parameterValue(TaktAudioProcessor::trackParameterID(i, "mute")) >= .5f;
+            pad.ledMode = muteMode || quickMute ? "mute" : "track-select";
+            pad.enabled = !pad.ledMuted;
+            pad.ledBaseColour = muteMode || quickMute ? (pad.ledMuted ? "off" : "green")
+                                                     : pad.selected ? "red" : "off";
+            pad.ledColour = pad.ledBaseColour;
+            if ((muteMode || quickMute) && pad.ledMuted && playing
+                && now < mutePulseUntil[static_cast<std::size_t>(i)])
+                pad.ledColour = "green";
+            pad.setTooltip(muteMode || quickMute ? "Click to mute or unmute track " + juce::String(i + 1) + ". Green means unmuted. NO leaves MUTE mode."
+                                                : "Select track " + juce::String(i + 1) + " silently; the active track is red.");
+        }
+        else
+        {
+            pad.index = gridRecording ? selectedPage * 16 + i : i;
+            const auto& s = uiSnapshot.visibleSteps[static_cast<std::size_t>(i)];
+            pad.enabled = gridRecording && (s.enabled || s.lockTrig); pad.lockOnly = gridRecording && s.lockTrig;
+            pad.selected = gridRecording ? selectedStep == pad.index : selectedTrack == i;
+            pad.playing = playing && current >= 0 && (gridRecording ? current == pad.index : current % 16 == i);
+            pad.hasLock = gridRecording && (s.lockPitch || s.lockCutoff || s.lockSlice);
+            pad.withinLength = !gridRecording || pad.index < length;
+            pad.ledMode = gridRecording ? "grid" : "play";
+            pad.ledPulse = !gridRecording && now < trackPulseUntil[static_cast<std::size_t>(i)];
+            pad.ledBaseColour = pad.enabled ? (pad.lockOnly ? "yellow" : "red") : "off";
+            pad.ledColour = pad.playing ? "white" : pad.ledPulse ? "red"
+                         : pad.hasLock && !blinkOn ? "off" : pad.ledBaseColour;
+            if (!pad.withinLength) pad.ledColour = "off";
+            pad.setTooltip(gridRecording ? "Click to toggle a note. Hold to edit without removing it; right-click selects. FUNC+pad toggles a yellow lock trig."
+                                        : "Click to play this track. The white number follows the sequence; red flashes show actual notes. Right-click selects silently.");
+        }
+        auto& props = pad.getProperties();
+        props.set("ledMode", pad.ledMode); props.set("ledColour", pad.ledColour);
+        props.set("ledBaseColour", pad.ledBaseColour); props.set("ledPlayhead", pad.playing);
+        props.set("ledLock", pad.hasLock); props.set("ledPulse", pad.ledPulse);
+        props.set("ledMuted", pad.ledMuted); props.set("ledBlinkOn", pad.ledBlinkOn);
         if (previous != visualState()) pad.repaint();
     }
-    for (int i = 0; i < 8; ++i) pageButtons[static_cast<std::size_t>(i)].setToggleState(i == selectedPage, juce::dontSendNotification);
+    for (int i = 0; i < 8; ++i)
+    {
+        auto& button = pageButtons[static_cast<std::size_t>(i)];
+        auto& props = button.getProperties();
+        const bool available = i * 16 < length, pagePlaying = playing && current >= 0 && current / 16 == i;
+        const bool changed = static_cast<bool>(props["ledAvailable"]) != available
+            || static_cast<bool>(props["ledPlaying"]) != pagePlaying
+            || static_cast<bool>(props["ledBlinkOn"]) != pageBlinkOn;
+        props.set("ledAvailable", available); props.set("ledPlaying", pagePlaying); props.set("ledBlinkOn", pageBlinkOn);
+        button.setToggleState(i == selectedPage, juce::dontSendNotification);
+        if (changed) button.repaint();
+    }
     patternLength.setValue(length, juce::dontSendNotification);
 }
 
@@ -2035,11 +2167,7 @@ bool TaktAudioProcessorEditor::keyPressed(const juce::KeyPress& key, juce::Compo
     const auto row = juce::String("qwertyui").indexOfChar(ch); if (row >= 0) pad = row + 8;
     if (pad >= 0)
     {
-        if (view == View::Patterns) { selectPatternPad(pad); return true; }
-        if (view == View::Song) { selectSong(pad); return true; }
-        if (trkButton.getToggleState()) { finishControlAll(false); selectTrack(pad); trkButton.setToggleState(false, juce::dontSendNotification); }
-        else if (gridRecording) selectStep(selectedPage * 16 + pad, !mods.isShiftDown());
-        else if (mods.isShiftDown()) selectTrack(pad); else processor.triggerTrack(pad);
+        handlePad(pad, !mods.isShiftDown());
         return true;
     }
     return false;
@@ -2079,7 +2207,8 @@ void TaktAudioProcessorEditor::timerCallback()
         auto& pad = *trackPads[static_cast<std::size_t>(i)];
         const auto selected = i == selectedTrack;
         const auto muted = processor.parameterValue(TaktAudioProcessor::trackParameterID(i, "mute")) >= 0.5f;
-        const auto active = playing && uiSnapshot.currentTrigEnabled[static_cast<std::size_t>(i)] && !muted;
+        const auto active = displayedTriggerSerials[static_cast<std::size_t>(i)] != uiSnapshot.triggerSerials[static_cast<std::size_t>(i)]
+                         || juce::Time::getMillisecondCounterHiRes() < trackPulseUntil[static_cast<std::size_t>(i)];
         if (pad.selected != selected || pad.muted != muted || pad.playing != active)
         { pad.selected = selected; pad.muted = muted; pad.playing = active; pad.repaint(); }
     }
@@ -2131,7 +2260,9 @@ void TaktAudioProcessorEditor::timerCallback()
         statusLabel.setText(processor.isSampleImportPending(selectedTrack) ? "Loading sample in the background | CANCEL IMPORT cancels this track's pending import"
             : view == View::Patterns ? "PATTERNS: choose bank A-H, then pad 1-16 | edit or play a chain | BACK returns to parameters"
             : view == View::Song ? "SONG: pads select songs | ADD ROW | encoders edit the selected row | BACK returns to parameters"
-            : gridRecording ? "GRID: click a pad to toggle a step | right-click selects | STEP TOOLS edits locks | ? shows all shortcuts" : "PLAY: pads trigger tracks | right-click selects silently | REC returns to grid editing | ? shows all shortcuts", juce::dontSendNotification);
+            : muteMode ? "MUTE: green = unmuted | click 1-16 to mute | FUNC+TRK or NO exits"
+            : trkButton.getToggleState() ? "TRK: red = selected track | click 1-16 to select silently | NO cancels CONTROL ALL"
+            : gridRecording ? "GRID: red = note, yellow = lock | white number = playback | FUNC+TRK opens MUTE" : "PLAY: white number follows the sequence | pads play tracks | FUNC+pad quick-mutes | REC edits steps", juce::dontSendNotification);
     }
     const auto playingPage = playing && displayedCurrentStep >= 0 ? displayedCurrentStep / 16 : -1;
     if (displayedPlayingPage != playingPage)
@@ -2143,7 +2274,9 @@ void TaktAudioProcessorEditor::timerCallback()
         + ":" + juce::String(displayedMachine) + ":" + juce::String(displayedFilterMachine) + ":" + juce::String(displayedAmpMode)
         + ":" + juce::String(selectedBank) + ":" + juce::String(selectedSong) + ":" + juce::String(selectedSongRow)
         + ":" + juce::String(selectedSlice) + ":" + juce::String(currentSliceCount()) + ":" + juce::String(linkedSlicePoints ? 1 : 0)
-        + ":" + juce::String(host ? 1 : 0) + ":" + juce::String(displayedTempo, 1) + ":" + uiSnapshot.sampleName;
+        + ":" + juce::String(host ? 1 : 0) + ":" + juce::String(displayedTempo, 1) + ":" + uiSnapshot.sampleName
+        + ":" + juce::String(muteMode ? 1 : 0) + ":" + juce::String(trkButton.getToggleState() ? 1 : 0)
+        + ":" + juce::String(gridRecording ? 1 : 0) + ":" + juce::String(!gridRecording ? displayedCurrentStep : -1);
     for (const auto& encoder : encoders)
         oled += ":" + encoder->caption() + ":" + encoder->slider.getTextFromValue(encoder->slider.getValue()) + (encoder->slider.isEnabled() ? ":1" : ":0");
     if (lastOledContents != oled)

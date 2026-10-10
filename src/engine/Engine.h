@@ -129,6 +129,11 @@ public:
     void process(float* left, float* right, int numSamples, const Transport& transport,
                  const TriggerEvent* events = nullptr, int numEvents = 0);
     int getCurrentStep(int track) const;
+    std::int64_t getAbsoluteStep(int track) const;
+    // Audio-owned activity survives reset/restart so UI polling also sees
+    // notes that start and finish between two message-thread timer callbacks.
+    std::uint64_t getTriggerSerial(int track) const;
+    bool isTrackMuted(int track) const;
     static std::shared_ptr<const Sample> makeDemoSample(int track, double sampleRate = 44100.0);
 
 private:
@@ -222,6 +227,8 @@ private:
     std::array<std::array<Step, maxSteps>, numTracks> steps_{};
     std::array<int, numTracks> lengths_{{16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16}};
     std::array<int, numTracks> currentSteps_{};
+    std::array<std::int64_t, numTracks> absoluteSteps_{};
+    std::array<std::uint64_t, numTracks> triggerSerials_{};
     std::array<Voice, numTracks> voices_{};
     std::array<Envelope, numTracks> amplitudeEnvelopes_{}, filterEnvelopes_{};
     std::array<StereoFilter, numTracks> filters_{};
