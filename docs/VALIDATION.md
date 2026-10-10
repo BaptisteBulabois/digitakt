@@ -263,3 +263,13 @@ lecture et le mode MUTE. La galerie comprend dix captures supplémentaires
 au panneau par défaut. Les règles documentées et les limites sont dans
 [TRIG_LIGHTS_REFERENCE.md](reference/TRIG_LIGHTS_REFERENCE.md). Ce lot ne
 modifie pas les algorithmes de rendu sonore ni le format d'état musical.
+
+Le [run Windows 38065793245](https://github.com/BaptisteBulabois/digitakt/actions/runs/38065793245),
+pour le commit `3785be8212ddb3091a7e3f26248ed51e4fb878b1`, réussit : build
+x64 Release, cinq cibles CTest, nouvelles régressions GUI du séquenceur et
+validation du vrai bundle VST3. Les cas de notes courtes, réouverture, pistes
+mutées à vitesses différentes et boucles d'un pas passent aussi sous Windows.
+L'[archive 0.3.3](https://github.com/BaptisteBulabois/digitakt/actions/runs/38065793245/artifacts/11674624453)+a été téléchargée et inspectée : bundle PE AMD64 complet, manifeste 0.3.3,
+identité VST3 conservée, aperçu 900 × 780, dix captures dont GRID/MUTE et
+guide d'installation. La validation utilise le host de test JUCE ; l'essai
+de cette version dans Ableton Live reste à faire par l'utilisateur.
