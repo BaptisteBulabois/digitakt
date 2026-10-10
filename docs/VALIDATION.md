@@ -187,3 +187,14 @@ du README provient de ce rendu de l'éditeur.
 L'utilisateur a retiré la compatibilité avec les versions précédentes comme
 exigence. Le contrôle avec un ancien bundle et la parité de son rendu ne font
 plus partie de la validation de ce lot. `main` reste au commit `185ad20`.
+
+Le [run Windows 38056853020](https://github.com/BaptisteBulabois/digitakt/actions/runs/38056853020),
+pour le commit `edd8733b9a51d36c6b770d216b123e23a747ab6f`, a réussi :
+compilation x64 Release, cinq cibles CTest et suite GUI/host sur le vrai
+VST3 Windows. Les nouveaux cas de rappel sur instance déjà préparée, Select
+avant/après Restore, swing Song et import asynchrone passent aussi sur Windows.
+L'[archive installable 0.3.1](https://github.com/BaptisteBulabois/digitakt/actions/runs/38056853020/artifacts/11671683037)
+a été téléchargée et inspectée : bundle complet, binaire PE AMD64, manifeste
+0.3.1, identité VST3 conservée, capture Windows 900 × 780 et LISEZ-MOI présents.
+Cette validation utilise un host de test JUCE ; elle ne constitue pas un essai
+de la 0.3.1 dans Ableton Live.
