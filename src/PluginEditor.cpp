@@ -832,7 +832,7 @@ void TaktAudioProcessorEditor::layoutPanel()
         pageButtons[static_cast<std::size_t>(i)].setBounds(750 + (i % 4) * 21, 381 + (i / 4) * 21, 15, 15);
     for (int i = 0; i < 16; ++i)
         stepPads[static_cast<std::size_t>(i)]->setBounds(176 + (i % 8) * 83, 506 + (i / 8) * 89, 70, 70);
-    waveform->setBounds(180, 158, 240, 71);
+    waveform->setBounds(180, 173, 240, 33);
     sampleLabel.setBounds(178, 234, 242, 15);
     sampleInfoLabel.setBounds(178, 234, 242, 15);
     helpLabel.setBounds(164, 307, 680, 370);
@@ -924,7 +924,8 @@ void TaktAudioProcessorEditor::paintPanel(juce::Graphics& g)
                                              bold ? juce::Font::bold : juce::Font::plain)));
         g.drawFittedText(text, bounds, alignment, 1);
     };
-    oledText(patternName(uiSnapshot.currentPattern) + (uiSnapshot.performKit ? " P" : "") + "  T" + number(selectedTrack + 1),
+    oledText(patternName(uiSnapshot.currentPattern) + (uiSnapshot.performKit ? " P" : "") + "  T" + number(selectedTrack + 1)
+             + (sourceWave ? view == View::SliceEditor ? " SLICE" : " SRC " + juce::String(parameterPages[1] + 1) + "/2" : juce::String{}),
              {180, 127, 145, 14}, 11, true);
     oledText((host ? "DAW " : "") + juce::String(displayedTempo, 1), {326, 127, 94, 14}, 11, true, juce::Justification::centredRight);
     g.setColour(ink.withAlpha(.35f)); g.drawHorizontalLine(143, 180, 420);
@@ -935,15 +936,16 @@ void TaktAudioProcessorEditor::paintPanel(juce::Graphics& g)
     const auto machineCaption = view == View::Parameters && family == Family::Source ? juce::String(" ") + machineNames[static_cast<std::size_t>(juce::jlimit(0, 6, displayedMachine))]
         : view == View::Parameters && family == Family::Filter ? juce::String(" ") + filterNames[static_cast<std::size_t>(juce::jlimit(0, 6, displayedFilterMachine))]
         : view == View::Parameters && family == Family::Amp ? juce::String(" ") + juce::StringArray{"LEGACY", "AHD", "ADSR"}[juce::jlimit(0, 2, displayedAmpMode)] : juce::String{};
-    oledText(context + machineCaption + pageCaption, {180, 146, 240, 12}, 10, true);
-    if (!sourceWave)
+    if (!sourceWave) oledText(context + machineCaption + pageCaption, {180, 146, 240, 12}, 10, true);
         for (int i = 0; i < 8; ++i)
         {
-            const int x = 180 + (i % 4) * 60, y = 162 + (i / 4) * 36;
+            const int x = 180 + (i % 4) * 60;
+            const int y = sourceWave ? (i < 4 ? 146 : 209) : 162 + (i / 4) * 36;
             auto& dial = *encoders[static_cast<std::size_t>(i)];
-            oledText(dial.caption(), {x, y, 58, 11}, 9);
+            oledText(dial.caption(), {x, y, 58, sourceWave ? 10 : 11}, 9);
             oledText(dial.slider.isEnabled() ? dial.slider.getTextFromValue(dial.slider.getValue()) : "--",
-                     {x, y + 12, 58, 17}, 12, true, juce::Justification::centredLeft);
+                     {x, y + (sourceWave ? 11 : 12), 58, sourceWave ? 14 : 17}, sourceWave ? 11 : 12,
+                     true, juce::Justification::centredLeft);
         }
     const auto footer = view == View::SliceEditor ? juce::String(linkedSlicePoints ? "LINKED" : "UNLINKED") + "  SLICE " + juce::String(selectedSlice + 1)
         : view == View::Patterns ? "BANK " + juce::String::charToString(static_cast<juce::juce_wchar>('A' + selectedBank)) + "  SELECT PATTERN"

@@ -35,6 +35,7 @@ Les fonctions de connexion matérielle restent hors périmètre.
 | Codeurs A–H | Deux rangées de quatre, avec uniquement leurs lettres sur le panneau. Les noms et valeurs des paramètres sont affichés dans l'OLED ; une valeur apparaît également au survol ou pendant le réglage. |
 | Volume / LEVEL | Boutons rotatifs sans champs numériques permanents ; valeur disponible au survol. |
 | Écran | Zone OLED de 256 × 128 unités, rapport 2:1 ; typographie à chasse fixe, paramètres en deux rangées correspondant aux codeurs. Le nom du sample reste dans l'écran. |
+| Waveform | Les huit noms et valeurs restent affichés au-dessus et au-dessous de la waveform, y compris pendant l'édition Slice. |
 | Import SRC | Bouton IMPORT/CANCEL situé sous l'écran, à l'intérieur de son cadre ; il ne dépasse plus à droite des codeurs. |
 | Transport | Symboles cercle, triangle et carré pour REC, PLAY et STOP, avec COPY/CLEAR/PASTE comme inscriptions secondaires. |
 | Menus | Pictogrammes pour preset/kit, réglages, sampling, tempo et clavier, avec légendes secondaires sous les touches ; les fonctions absentes restent désactivées. |
