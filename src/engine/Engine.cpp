@@ -42,9 +42,8 @@ float interpolate(const std::vector<float>& data, double position, std::size_t f
     return finite(data[i]) + fraction * (finite(data[j]) - finite(data[i]));
 }
 
-float filter(float input, float& low, float& band, float g, float k)
+float filter(float input, float& low, float& band, float g, float a)
 {
-    const float a = 1.0f / (1.0f + g * (g + k));
     const float v1 = a * (band + g * (input - low));
     const float v2 = low + g * v1;
     band = finite(2.0f * v1 - band);
@@ -101,7 +100,7 @@ float lfoWave(LfoWave wave, double phase, std::int64_t cycle, int seed)
     const double x = phase - std::floor(phase);
     switch (wave)
     {
-        case LfoWave::Triangle: return static_cast<float>(2.0 / pi * std::asin(std::sin(2.0 * pi * x)));
+        case LfoWave::Triangle: return static_cast<float>(x < 0.25 ? 4.0 * x : (x < 0.75 ? 2.0 - 4.0 * x : 4.0 * x - 4.0));
         case LfoWave::Sine: return static_cast<float>(std::sin(2.0 * pi * x));
         case LfoWave::Square: return x < 0.5 ? 1.0f : -1.0f;
         case LfoWave::Saw: return static_cast<float>(1.0 - 2.0 * x);
@@ -117,6 +116,15 @@ double wrapped(double position, std::size_t first, std::size_t last)
     const double size = static_cast<double>(last - first);
     return first + std::fmod(std::fmod(position - first, size) + size, size);
 }
+}
+
+float masterSoftClip(float input) noexcept
+{
+    // This approximation is bounded only on [-3, 3]. Clamp before squaring so
+    // very large finite sums cannot overflow or escape the master peak limit.
+    const float x = std::clamp(finite(input), -3.0f, 3.0f);
+    const float square = x * x;
+    return std::clamp(x * (27.0f + square) / (27.0f + 9.0f * square), -1.0f, 1.0f);
 }
 
 void Engine::prepare(double sampleRate, int maxBlockSize)
@@ -245,6 +253,8 @@ void Engine::setTrackParams(int track, const TrackParams& value)
     const bool filterChanged = params_[track].filter.machine != p.filter.machine;
     params_[track] = p;
     modulated_[track] = p;
+    lfoEnabled_[track] = hasLfo(p);
+    extendedDsp_[track] = hasExtendedDsp(p);
     if (machineChanged) voices_[track] = Voice{};
     else if (extendedActivated && voices_[track].active && p.machine == Machine::Legacy)
         configureMachineRegion(track, voices_[track], p);
@@ -540,7 +550,7 @@ void Engine::trigger(int track, float velocity, float pitch, bool lockPitch, flo
         if (!v.filterEnvelopePending) filterEnvelopes_[track].trigger(p.filter.envelope);
     }
     if (lfoTrig) triggerLfos(track);
-    if (p.machine != Machine::Legacy || hasLfo(p) || hasExtendedDsp(p))
+    if (p.machine != Machine::Legacy || lfoEnabled_[track] || extendedDsp_[track])
     {
         configureMachineRegion(track, v, modulated_[track]);
         v.position = v.reversed ? static_cast<double>(v.last - 1) : static_cast<double>(v.sourceStart);
@@ -563,31 +573,56 @@ void Engine::noteOff(int track, int note)
 
 void Engine::updateVoiceCoefficients(int track)
 {
-    if (voices_[track].machine != Machine::Legacy || hasLfo(params_[track]) || hasExtendedDsp(params_[track]))
-    {
-        auto& v = voices_[track];
-        const auto& p = modulated_[track];
-        const bool noteSlice = p.sliceByNote && (v.machine == Machine::Slice || v.machine == Machine::Grid);
-        const float tuning = v.pitchLocked ? v.triggerPitch : p.pitch + v.triggerPitch;
-        const double semitones = limit(static_cast<double>(noteSlice ? p.pitch : tuning + v.note - 60), -96.0, 96.0);
-        v.increment = limit(samples_[track]->sampleRate, 8000.0, 384000.0) / sampleRate_ * std::exp2(semitones / 12.0);
-        v.timelineIncrement = static_cast<double>(samples_[track]->left.size()) * currentBpm_ / (60.0 * sampleRate_ * 4.0 * p.bars);
-        if (v.machine == Machine::Repitch) v.increment = v.timelineIncrement;
-        if (v.reversed) { v.increment = -v.increment; v.timelineIncrement = -v.timelineIncrement; }
-        if (!v.cutoffLocked) v.cutoff = p.cutoff;
-        v.filterG = static_cast<float>(std::tan(pi * limit(v.cutoff, 20.0f, static_cast<float>(sampleRate_ * 0.45)) / sampleRate_));
-        v.filterK = 2.0f - 1.9f * p.resonance;
-        return;
-    }
-    const auto& p = params_[track];
     auto& v = voices_[track];
-    const double semitones = limit(static_cast<double>(v.pitchLocked ? v.triggerPitch : p.pitch + v.triggerPitch), -96.0, 96.0);
-    v.increment = limit(samples_[track]->sampleRate, 8000.0, 384000.0) / sampleRate_ * std::exp2(semitones / 12.0);
-    if (p.reverse) v.increment = -v.increment;
+    if (!samples_[track]) return;
+    const bool extended = v.machine != Machine::Legacy || lfoEnabled_[track] || extendedDsp_[track];
+    const auto& p = extended ? modulated_[track] : params_[track];
+    const bool noteSlice = extended && p.sliceByNote && (v.machine == Machine::Slice || v.machine == Machine::Grid);
+    const float tuning = v.pitchLocked ? v.triggerPitch : p.pitch + v.triggerPitch;
+    const double semitones = limit(static_cast<double>(noteSlice ? p.pitch : tuning + (extended ? v.note - 60 : 0)), -96.0, 96.0);
+    const bool reversed = extended ? v.reversed : p.reverse;
+    if (!v.coefficientsValid || v.cachedSemitones != semitones || v.cachedReverse != reversed)
+    {
+        v.increment = limit(samples_[track]->sampleRate, 8000.0, 384000.0) / sampleRate_ * std::exp2(semitones / 12.0);
+        if (reversed) v.increment = -v.increment;
+        v.cachedSemitones = semitones;
+    }
+    if (extended && (!v.coefficientsValid || v.cachedBars != p.bars || v.cachedBpm != currentBpm_ || v.cachedReverse != reversed))
+    {
+        v.timelineIncrement = static_cast<double>(samples_[track]->left.size()) * currentBpm_ / (60.0 * sampleRate_ * 4.0 * p.bars);
+        if (reversed) v.timelineIncrement = -v.timelineIncrement;
+        v.cachedBars = p.bars; v.cachedBpm = currentBpm_;
+    }
+    if (v.machine == Machine::Repitch) v.increment = v.timelineIncrement;
+    v.cachedReverse = reversed;
     if (!v.cutoffLocked) v.cutoff = p.cutoff;
     const float hz = limit(v.cutoff, 20.0f, static_cast<float>(sampleRate_ * 0.45));
-    v.filterG = static_cast<float>(std::tan(pi * hz / sampleRate_));
-    v.filterK = 2.0f - 1.9f * p.resonance;
+    if (!v.coefficientsValid || v.cachedCutoff != hz || v.cachedResonance != p.resonance)
+    {
+        if (!v.coefficientsValid || v.cachedCutoff != hz)
+            v.filterG = static_cast<float>(std::tan(pi * hz / sampleRate_));
+        v.filterK = 2.0f - 1.9f * p.resonance;
+        v.filterA = 1.0f / (1.0f + v.filterG * (v.filterG + v.filterK));
+        v.cachedCutoff = hz; v.cachedResonance = p.resonance;
+    }
+    if (!v.coefficientsValid || v.cachedDrive != p.drive)
+    {
+        v.driveScale = 1.0f + p.drive * 20.0f;
+        v.driveInverse = p.drive > 0.0f ? 1.0f / std::tanh(v.driveScale) : 1.0f;
+        v.cachedDrive = p.drive;
+    }
+    const float bitDepth = std::round(extended ? std::min(p.bitDepth, p.bitReduction) : p.bitDepth);
+    if (!v.coefficientsValid || v.cachedBitDepth != bitDepth)
+    {
+        v.bitLevels = std::exp2(bitDepth - 1.0f);
+        v.cachedBitDepth = bitDepth;
+    }
+    if (!v.coefficientsValid || v.cachedPan != p.pan)
+    {
+        v.panLeft = std::sqrt(1.0f - p.pan); v.panRight = std::sqrt(1.0f + p.pan);
+        v.cachedPan = p.pan;
+    }
+    v.coefficientsValid = true;
 }
 
 void Engine::configureMachineRegion(int track, Voice& v, const TrackParams& p)
@@ -638,7 +673,7 @@ void Engine::triggerLfos(int track)
         if (p.mode == LfoMode::Hold)
             state.held = lfoWave(p.wave, state.phase, state.cycle, track * 3 + static_cast<int>(i) + 1);
     }
-    if (hasLfo(params_[track])) updateLfos(track, false);
+    if (lfoEnabled_[track]) updateLfos(track, false);
 }
 
 void Engine::updateLfos(int track, bool advance)
@@ -739,13 +774,17 @@ void Engine::renderMachine(int track, float& left, float& right)
         v.loopFirst = std::min(static_cast<std::size_t>(p.loopPosition * s.left.size()), v.last - 1);
     updateVoiceCoefficients(track);
     const double attackFrames = p.attack * sampleRate_, decayFrames = p.decay * sampleRate_;
-    float envelope = static_cast<float>(std::min(1.0, (v.age + 1) / attackFrames) * std::exp(-static_cast<double>(v.age) / decayFrames));
+    float envelope;
     if (p.amplitudeEnvelope.mode != EnvelopeMode::Legacy)
     {
         envelope = amplitudeEnvelopes_[track].next(p.amplitudeEnvelope, sampleRate_);
         if (!amplitudeEnvelopes_[track].isActive()) { v.active = false; return; }
     }
-    else if (envelope < 1.0e-6f && v.age > attackFrames) { v.active = false; return; }
+    else
+    {
+        envelope = static_cast<float>(std::min(1.0, (v.age + 1) / attackFrames) * std::exp(-static_cast<double>(v.age) / decayFrames));
+        if (envelope < 1.0e-6f && v.age > attackFrames) { v.active = false; return; }
+    }
     const bool stretched = v.machine == Machine::Stretch || v.machine == Machine::Werp;
     const double timeline = stretched ? v.timelineIncrement : v.increment;
     const auto readChannel = [&](const std::vector<float>& data)
@@ -792,10 +831,10 @@ void Engine::renderMachine(int track, float& left, float& right)
     const float depth = std::min(p.bitDepth, p.bitReduction);
     if (depth < 16.0f)
     {
-        const float levels = std::exp2(std::round(depth) - 1.0f);
+        const float levels = v.bitLevels;
         l = std::round(l * levels) / levels; r = std::round(r * levels) / levels;
     }
-    if (p.trackFx.drivePre) StereoTrackFx::overdrive(l, r, p.drive);
+    if (p.trackFx.drivePre && p.drive > 0.0f) StereoTrackFx::overdrivePrepared(l, r, v.driveScale, v.driveInverse);
     if (p.trackFx.srrPre) trackFx_[track].rateReduction(l, r, p.trackFx.srr);
     if (v.filterEnvelopePending)
     {
@@ -810,14 +849,14 @@ void Engine::renderMachine(int track, float& left, float& right)
     if (p.filter.machine == FilterMachine::Prototype && p.filter.base == 0.0f
         && p.filter.width == 127.0f && p.filter.envDepth == 0.0f && p.filter.keytrack == 0.0f)
     {
-        l = filter(l, v.lowL, v.bandL, v.filterG, v.filterK);
-        r = filter(r, v.lowR, v.bandR, v.filterG, v.filterK);
+        l = filter(l, v.lowL, v.bandL, v.filterG, v.filterA);
+        r = filter(r, v.lowR, v.bandR, v.filterG, v.filterA);
     }
     else filters_[track].process(l, r, p.filter, v.cutoff, p.resonance, filterEnvelope, v.note);
     if (!p.trackFx.srrPre) trackFx_[track].rateReduction(l, r, p.trackFx.srr);
-    if (!p.trackFx.drivePre) StereoTrackFx::overdrive(l, r, p.drive);
+    if (!p.trackFx.drivePre && p.drive > 0.0f) StereoTrackFx::overdrivePrepared(l, r, v.driveScale, v.driveInverse);
     const float amplitude = envelope * v.velocity * p.gain * p.sampleLevel * p.ampVolume;
-    left = finite(l * amplitude * std::sqrt(1.0f - p.pan)); right = finite(r * amplitude * std::sqrt(1.0f + p.pan));
+    left = finite(l * amplitude * v.panLeft); right = finite(r * amplitude * v.panRight);
     v.position += timeline;
     ++v.age;
     const auto boundary = v.looping && v.reversed ? v.loopFirst : v.first;
@@ -830,7 +869,7 @@ void Engine::renderMachine(int track, float& left, float& right)
 
 void Engine::renderVoice(int track, float& left, float& right)
 {
-    if (voices_[track].machine != Machine::Legacy || hasLfo(params_[track]) || hasExtendedDsp(params_[track]))
+    if (voices_[track].machine != Machine::Legacy || lfoEnabled_[track] || extendedDsp_[track])
     {
         renderMachine(track, left, right);
         return;
@@ -856,23 +895,22 @@ void Engine::renderVoice(int track, float& left, float& right)
     }
     float l = interpolate(s.left, v.position, v.first, v.last, p.loop);
     float r = s.right.empty() ? l : interpolate(s.right, v.position, v.first, v.last, p.loop);
-    const float drive = 1.0f + p.drive * 20.0f;
     if (p.drive > 0.0f)
     {
-        l = std::tanh(l * drive) / std::tanh(drive);
-        r = std::tanh(r * drive) / std::tanh(drive);
+        l = std::tanh(l * v.driveScale) * v.driveInverse;
+        r = std::tanh(r * v.driveScale) * v.driveInverse;
     }
     if (p.bitDepth < 16.0f)
     {
-        const float levels = std::exp2(std::round(p.bitDepth) - 1.0f);
+        const float levels = v.bitLevels;
         l = std::round(l * levels) / levels;
         r = std::round(r * levels) / levels;
     }
-    l = filter(l, v.lowL, v.bandL, v.filterG, v.filterK);
-    r = filter(r, v.lowR, v.bandR, v.filterG, v.filterK);
+    l = filter(l, v.lowL, v.bandL, v.filterG, v.filterA);
+    r = filter(r, v.lowR, v.bandR, v.filterG, v.filterA);
     const float amplitude = envelope * v.velocity * p.gain;
-    left = finite(l * amplitude * std::sqrt(1.0f - p.pan));
-    right = finite(r * amplitude * std::sqrt(1.0f + p.pan));
+    left = finite(l * amplitude * v.panLeft);
+    right = finite(r * amplitude * v.panRight);
     v.position += v.increment;
     ++v.age;
     if (v.position < v.first || v.position >= v.last)
@@ -923,6 +961,16 @@ void Engine::process(float* left, float* right, int numSamples, const Transport&
                                      static_cast<double>(delayL_.size() - 2));
     const auto delayWhole = static_cast<std::size_t>(std::floor(delayFrames));
     const float delayFraction = static_cast<float>(delayFrames - delayWhole);
+    numEvents = std::max(0, numEvents);
+    const bool sortedEvents = !events || std::is_sorted(events, events + numEvents,
+        [](const TriggerEvent& a, const TriggerEvent& b) { return a.sampleOffset < b.sampleOffset; });
+    int externalCursor = 0;
+    const auto applyExternalEvent = [&](const TriggerEvent& event)
+    {
+        if (event.noteOff) noteOff(event.track, event.note);
+        else trigger(event.track, event.velocity, event.pitch, false, 0.0f, false,
+                     event.note, event.slice, event.lockSlice, true, event.gateBeats, event.filterTrig);
+    };
 
     for (int begin = 0; begin < numSamples; begin += blockSize_)
     {
@@ -938,20 +986,24 @@ void Engine::process(float* left, float* right, int numSamples, const Transport&
                 else trigger(e.track, e.velocity, e.pitch, e.lockPitch, e.cutoff, e.lockCutoff,
                              e.note, e.slice, e.lockSlice, e.lfoTrig, e.gateBeats, e.filterTrig);
             }
-            // External events may be unsorted; their offsets are relative to the
-            // full caller block, even if the engine renders smaller chunks.
+            // The processor supplies ordered MIDI: advance one cursor across
+            // all chunks, preserving caller order at equal offsets. Retain the
+            // allocation-free unsorted fallback for direct Engine callers.
             if (events)
-                for (int event = 0; event < numEvents; ++event)
-                    if (events[event].sampleOffset == begin + frame)
-                    {
-                        const auto& eventValue = events[event];
-                        if (eventValue.noteOff) noteOff(eventValue.track, eventValue.note);
-                        else trigger(eventValue.track, eventValue.velocity, eventValue.pitch, false, 0.0f, false,
-                                     eventValue.note, eventValue.slice, eventValue.lockSlice, true, eventValue.gateBeats,
-                                     eventValue.filterTrig);
-                    }
+            {
+                const int offset = begin + frame;
+                if (sortedEvents)
+                {
+                    while (externalCursor < numEvents && events[externalCursor].sampleOffset < offset) ++externalCursor;
+                    while (externalCursor < numEvents && events[externalCursor].sampleOffset == offset)
+                        applyExternalEvent(events[externalCursor++]);
+                }
+                else
+                    for (int event = 0; event < numEvents; ++event)
+                        if (events[event].sampleOffset == offset) applyExternalEvent(events[event]);
+            }
             for (int track = 0; track < numTracks; ++track)
-                if (hasLfo(params_[track])) updateLfos(track);
+                if (lfoEnabled_[track]) updateLfos(track);
 
             float mixL = 0.0f, mixR = 0.0f, sendDL = 0.0f, sendDR = 0.0f, sendRL = 0.0f, sendRR = 0.0f;
             float sendCL = 0.0f, sendCR = 0.0f;
@@ -966,7 +1018,7 @@ void Engine::process(float* left, float* right, int numSamples, const Transport&
                 float l, r;
                 renderVoice(track, l, r);
                 mixL += l; mixR += r;
-                const auto& sends = hasLfo(params_[track]) ? modulated_[track] : params_[track];
+                const auto& sends = lfoEnabled_[track] ? modulated_[track] : params_[track];
                 sendDL += l * sends.delaySend;
                 sendDR += r * sends.delaySend;
                 sendRL += l * sends.reverbSend;
@@ -1026,8 +1078,8 @@ void Engine::process(float* left, float* right, int numSamples, const Transport&
             }
             mixL += (taps[0] + taps[2]) * 0.5f * fx_.reverbMix;
             mixR += (taps[1] + taps[3]) * 0.5f * fx_.reverbMix;
-            left[begin + frame] = std::tanh(finite(mixL));
-            right[begin + frame] = std::tanh(finite(mixR));
+            left[begin + frame] = masterSoftClip(mixL);
+            right[begin + frame] = masterSoftClip(mixR);
         }
     }
     if (transport.playing)

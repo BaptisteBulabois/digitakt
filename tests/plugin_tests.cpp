@@ -602,6 +602,538 @@ private:
     TaktAudioProcessor& processor;
 };
 
+// A host is allowed to save synchronously from a parameter callback. This
+// deliberately captures the first callback, while TEMP RELOAD is still
+// publishing the other parameters, rather than its final dirty notification.
+class MidRestoreStateListener final : public juce::AudioProcessorListener
+{
+public:
+    explicit MidRestoreStateListener(TaktAudioProcessor& owner) : processor(owner)
+    { processor.addListener(this); }
+    ~MidRestoreStateListener() override { processor.removeListener(this); }
+    void audioProcessorParameterChanged(juce::AudioProcessor*, int, float) override
+    {
+        if (!armed || captured) return;
+        captured = true;
+        observedState = stateOf(processor);
+    }
+    void audioProcessorChanged(juce::AudioProcessor*, const ChangeDetails&) override {}
+    bool armed = false, captured = false;
+    juce::MemoryBlock observedState;
+private:
+    TaktAudioProcessor& processor;
+};
+
+void testTransactionalReloadSave(const juce::File& mono, const juce::File& stereo)
+{
+    auto processor = std::make_unique<TaktAudioProcessor>();
+    auto reopened = std::make_unique<TaktAudioProcessor>();
+    juce::String error;
+    check(processor->loadSample(0, mono, error), error.toStdString());
+    processor->setParameter("t1_gain", .8f);
+    processor->setParameter("t1_pitch", 12);
+    processor->setParameter("t1_ampSustain", .7f);
+    processor->setTrackLength(0, 37);
+    auto savedStep = musicalStep(3);
+    savedStep.enabled = true;
+    processor->setStep(0, 0, savedStep);
+    processor->createSliceGrid(0, 4);
+    processor->temporarySavePattern();
+
+    check(processor->loadSample(0, stereo, error), error.toStdString());
+    processor->setParameter("t1_gain", .2f);
+    processor->setParameter("t1_pitch", -12);
+    processor->setParameter("t1_ampSustain", .3f);
+    processor->setTrackLength(0, 19);
+    auto editedStep = musicalStep(11);
+    editedStep.enabled = false;
+    processor->setStep(0, 0, editedStep);
+    processor->createSliceGrid(0, 8);
+
+    MidRestoreStateListener listener(*processor);
+    listener.armed = true;
+    processor->temporaryReloadPattern();
+    check(listener.captured && listener.observedState.getSize() > 0,
+          "TEMP RELOAD did not exercise a synchronous mid-parameter host save");
+    listener.armed = false;
+    reopened->setStateInformation(listener.observedState.getData(),
+                                  static_cast<int>(listener.observedState.getSize()));
+    const bool completeTarget = std::abs(reopened->parameterValue("t1_gain") - .8f) < 1.0e-6f
+        && reopened->parameterValue("t1_pitch") == 12
+        && std::abs(reopened->parameterValue("t1_ampSustain") - .7f) < 1.0e-6f
+        && reopened->getStep(0, 0).enabled && reopened->getTrackLength(0) == 37
+        && reopened->getSampleName(0) == mono.getFileNameWithoutExtension()
+        && reopened->getSlicePoints(0)[0].end == .25f;
+    const bool completePrevious = std::abs(reopened->parameterValue("t1_gain") - .2f) < 1.0e-6f
+        && reopened->parameterValue("t1_pitch") == -12
+        && std::abs(reopened->parameterValue("t1_ampSustain") - .3f) < 1.0e-6f
+        && !reopened->getStep(0, 0).enabled && reopened->getTrackLength(0) == 19
+        && reopened->getSampleName(0) == stereo.getFileNameWithoutExtension()
+        && reopened->getSlicePoints(0)[0].end == .125f;
+    check(completeTarget || completePrevious,
+          "A host save during TEMP RELOAD mixed parameters, trigs, length, samples or slices");
+    compareSteps(reopened->getStep(0, 0), completeTarget ? savedStep : editedStep);
+    check(processor->parameterValue("t1_pitch") == 12
+              && std::abs(processor->parameterValue("t1_gain") - .8f) < 1.0e-6f,
+          "TEMP RELOAD did not finish publishing its target");
+    passed("synchronous host save in the first TEMP RELOAD parameter callback recalls one complete musical state");
+}
+
+void testTransactionalProjectRecallSave(const juce::File& mono, const juce::File& stereo)
+{
+    auto source = std::make_unique<TaktAudioProcessor>();
+    auto destination = std::make_unique<TaktAudioProcessor>();
+    auto reopened = std::make_unique<TaktAudioProcessor>();
+    juce::String error;
+    check(source->loadSample(0, mono, error), error.toStdString());
+    source->setParameter("play", 1);
+    source->setParameter("hostSync", 1);
+    source->setParameter("master", .37f);
+    source->setParameter("tempo", 137);
+    source->setParameter("t1_gain", .8f);
+    source->setParameter("t1_pitch", 12);
+    source->setStep(0, 0, musicalStep(3));
+    const auto incoming = stateOf(*source);
+
+    check(destination->loadSample(0, stereo, error), error.toStdString());
+    destination->setParameter("play", 0);
+    destination->setParameter("hostSync", 0);
+    destination->setParameter("master", .61f);
+    destination->setParameter("tempo", 211);
+    destination->setParameter("t1_gain", .2f);
+    destination->setParameter("t1_pitch", -12);
+    destination->setStep(0, 0, {});
+    MidRestoreStateListener listener(*destination);
+    listener.armed = true;
+    destination->setStateInformation(incoming.getData(), static_cast<int>(incoming.getSize()));
+    check(listener.captured && listener.observedState.getSize() > 0,
+          "Project recall did not exercise a synchronous mid-parameter host save");
+    listener.armed = false;
+    reopened->setStateInformation(listener.observedState.getData(),
+                                  static_cast<int>(listener.observedState.getSize()));
+    const bool completeTarget = reopened->parameterValue("play") == 1
+        && reopened->parameterValue("hostSync") == 1
+        && std::abs(reopened->parameterValue("master") - .37f) < 1.0e-6f
+        && reopened->parameterValue("tempo") == 137
+        && std::abs(reopened->parameterValue("t1_gain") - .8f) < 1.0e-6f
+        && reopened->parameterValue("t1_pitch") == 12 && reopened->getStep(0, 0).enabled
+        && reopened->getSampleName(0) == mono.getFileNameWithoutExtension();
+    const bool completePrevious = reopened->parameterValue("play") == 0
+        && reopened->parameterValue("hostSync") == 0
+        && std::abs(reopened->parameterValue("master") - .61f) < 1.0e-6f
+        && reopened->parameterValue("tempo") == 211
+        && std::abs(reopened->parameterValue("t1_gain") - .2f) < 1.0e-6f
+        && reopened->parameterValue("t1_pitch") == -12 && !reopened->getStep(0, 0).enabled
+        && reopened->getSampleName(0) == stereo.getFileNameWithoutExtension();
+    check(completeTarget || completePrevious,
+          "A host save during project recall mixed musical state or play/hostSync/master globals");
+    passed("reentrant save during current project recall preserves a complete snapshot including play/sync/master");
+}
+
+void testCompressedSampleCache(const juce::File& mono)
+{
+    auto source = std::make_unique<TaktAudioProcessor>();
+    const auto constructed = source->getSampleCompressionCount();
+    check(constructed > 0, "Demo samples were not prepared for cached project saves");
+    const auto demo = stateOf(*source);
+    check(stateOf(*source) == demo && source->getSampleCompressionCount() == constructed,
+          "Repeated saves re-encoded immutable demo samples");
+    juce::String error;
+    check(source->loadSample(0, mono, error), error.toStdString());
+    const auto imported = source->getSampleCompressionCount();
+    check(imported == constructed + 1, "One sample import did not compress exactly once");
+    auto shared = std::make_unique<TaktAudioProcessor::PatternSnapshot>(*source->getPatternSnapshot(0));
+    for (auto& sample : shared->samples) sample = source->getSample(0);
+    check(source->setPatternSnapshot(17, *shared), "Cannot establish a shared-sample bank for caching");
+    auto external = std::make_shared<takt::Sample>(*source->getSample(0));
+    external->name = "externally supplied immutable sample";
+    auto externalBank = std::make_unique<TaktAudioProcessor::PatternSnapshot>(*shared);
+    for (auto& sample : externalBank->samples) sample = external;
+    check(source->setPatternSnapshot(127, *externalBank), "Cannot store an external sample in a bank");
+    const auto bankPrepared = source->getSampleCompressionCount();
+    check(bankPrepared == imported + 1,
+          "Publishing the same unseen sample in sixteen slots did not prepare exactly one compressed blob");
+    const auto project = stateOf(*source);
+    check(source->getSampleCompressionCount() == bankPrepared && stateOf(*source) == project,
+          "Saving shared sample pointers in several tracks/patterns repeated compression");
+
+    auto reopened = std::make_unique<TaktAudioProcessor>();
+    const auto beforeRecall = reopened->getSampleCompressionCount();
+    reopened->setStateInformation(project.getData(), static_cast<int>(project.getSize()));
+    check(reopened->getSampleCompressionCount() == beforeRecall,
+          "State recall re-encoded existing compressed sample blobs");
+    const auto restored = reopened->getSample(0);
+    const auto original = source->getSample(0);
+    check(restored && original && restored->left == original->left && restored->right == original->right,
+          "Using cached blobs changed imported source sample frames");
+    const auto bank = reopened->getPatternSnapshot(17);
+    check(bank && bank->samples[0] == restored && bank->samples[15] == restored,
+          "A cached state lost shared sample identity across tracks or patterns");
+    stateOf(*reopened);
+    stateOf(*reopened);
+    check(reopened->getSampleCompressionCount() == beforeRecall,
+          "Re-saving a decoded project compressed its immutable samples again");
+    configureDry(*source); configureDry(*reopened);
+    source->prepareToPlay(testRate, testBlock);
+    reopened->prepareToPlay(testRate, testBlock);
+    checkEqualAudio(process(*reopened, testBlock, note(36)),
+                    process(*source, testBlock, note(36)), 1.0e-6f,
+                    "Cached project sample recall");
+    passed("demo/import/decoded sample caches; repeat autosaves avoid compression; bank deduplication and audible recall");
+}
+
+void testMusicalEditsBeforeFirstRecalledBlock(const juce::File& mono, const juce::File& stereo)
+{
+    for (const bool alreadyPrepared : {false, true})
+    {
+        auto reference = std::make_unique<TaktAudioProcessor>();
+        auto recalled = std::make_unique<TaktAudioProcessor>();
+        auto reopened = std::make_unique<TaktAudioProcessor>();
+        configureDry(*reference);
+        for (int track = 0; track < takt::numTracks; ++track) reference->clearTrack(track);
+        juce::String error;
+        check(reference->loadSample(0, mono, error), error.toStdString());
+        takt::Step incoming;
+        incoming.enabled = true;
+        reference->setStep(1, 0, incoming); // This restored note must be removed before playback.
+        reference->setParameter("play", 1);
+        reference->setParameter("tempo", 120);
+        const auto project = stateOf(*reference);
+        if (alreadyPrepared)
+        {
+            recalled->prepareToPlay(testRate, testBlock);
+            check(magnitude(process(*recalled, testBlock)) == 0,
+                  "Prepared recall fixture must begin without sounding voices");
+        }
+        recalled->setStateInformation(project.getData(), static_cast<int>(project.getSize()));
+
+        auto edited = musicalStep(3);
+        edited.conditionEvery = 1;
+        edited.retrigs = 1;
+        edited.microtiming = 0;
+        edited.lockSlice = true;
+        edited.slice = 0;
+        for (auto* processor : {reference.get(), recalled.get()})
+        {
+            processor->clearTrack(1);
+            processor->setStep(0, 0, edited);
+            processor->setTrackLength(0, 8);
+            processor->setPatternLength(4);
+            check(processor->createSliceGrid(0, 8) && processor->setSlicePoint(0, 0, {.25f, .5f, .25f}),
+                  "Cannot edit slices before the first recalled audio block");
+            check(processor->loadSample(0, stereo, error), error.toStdString());
+            processor->setParameter("t1_machine", 5);
+            processor->setParameter("t1_ampMode", 2);
+            processor->setParameter("t1_ampSustain", .7f);
+        }
+        // A host can autosave these edits before it calls processBlock at all.
+        const auto editedProject = stateOf(*recalled);
+        reopened->setStateInformation(editedProject.getData(), static_cast<int>(editedProject.getSize()));
+        reference->prepareToPlay(testRate, testBlock);
+        if (!alreadyPrepared) recalled->prepareToPlay(testRate, testBlock);
+        reopened->prepareToPlay(testRate, testBlock);
+        const auto expected = process(*reference, testBlock);
+        const auto actual = process(*recalled, testBlock);
+        check(magnitude(expected) > .001f, "First-block post-recall musical edit fixture rendered no reference audio");
+        checkEqualAudio(actual, expected, 1.0e-6f,
+                        "Step/clear/length/slice/sample/parameter edits before first recalled audio block");
+        checkEqualAudio(process(*reopened, testBlock), expected, 1.0e-6f,
+                        "Saving post-recall musical edits before the first audio block");
+        for (auto* processor : {recalled.get(), reopened.get()})
+        {
+            processor->servicePendingTransitions();
+            compareSteps(processor->getStep(0, 0), edited);
+            check(!processor->getStep(1, 0).enabled && processor->getTrackLength(0) == 8
+                      && processor->getPatternLength() == 4 && processor->getSlicePoints(0)[0].start == .25f
+                      && processor->getSlicePoints(0)[0].end == .5f
+                      && processor->getSampleName(0) == stereo.getFileNameWithoutExtension()
+                      && processor->parameterValue("t1_machine") == 5,
+                  "Mirroring or reopening a recalled first block replaced later musical edits");
+        }
+        const auto afterAudio = stateOf(*recalled);
+        reopened->setStateInformation(afterAudio.getData(), static_cast<int>(afterAudio.getSize()));
+        reference->prepareToPlay(testRate, testBlock);
+        reopened->prepareToPlay(testRate, testBlock);
+        checkEqualAudio(process(*reopened, testBlock), process(*reference, testBlock), 1.0e-6f,
+                        "Saving post-recall musical edits after rendering and UI synchronization");
+    }
+    passed("new/prepared project recall retains step/CLEAR, length, slice and sample edits in first audio, UI and save/reopen");
+}
+
+void testParametersBeforeFirstRecalledBlock(const juce::File& mono)
+{
+    for (const bool alreadyPrepared : {false, true})
+    {
+        auto reference = std::make_unique<TaktAudioProcessor>();
+        auto recalled = std::make_unique<TaktAudioProcessor>();
+        auto reopened = std::make_unique<TaktAudioProcessor>();
+        juce::String error;
+        check(reference->loadSample(0, mono, error), error.toStdString());
+        reference->setParameter("master", .31f);
+        reference->setParameter("t1_pan", -1);
+        reference->setParameter("t1_mute", 1);
+        reference->setParameter("t1_delaySend", .65f);
+        reference->setParameter("t1_reverbSend", .65f);
+        reference->setParameter("delayMix", .45f);
+        reference->setParameter("reverbMix", .45f);
+        const auto project = stateOf(*reference);
+        if (alreadyPrepared)
+        {
+            recalled->prepareToPlay(testRate, testBlock);
+            check(magnitude(process(*recalled, testBlock)) == 0,
+                  "Prepared parameter recall fixture must begin without sounding voices");
+        }
+        recalled->setStateInformation(project.getData(), static_cast<int>(project.getSize()));
+        for (auto* processor : {reference.get(), recalled.get()})
+        {
+            configureDry(*processor);
+            processor->setParameter("master", .6f);
+            processor->setParameter("t1_gain", .4f);
+            processor->setParameter("t1_pan", 1);
+            processor->setParameter("t1_mute", 0);
+            processor->setParameter("t1_pitch", 7);
+            processor->setParameter("t1_ampMode", 2);
+            processor->setParameter("t1_ampSustain", .7f);
+            processor->setParameter("t1_filterMachine", 3);
+            processor->setParameter("t1_cutoff", 1200);
+            processor->setParameter("t1_srr", 96);
+        }
+        const auto editedProject = stateOf(*recalled);
+        reopened->setStateInformation(editedProject.getData(), static_cast<int>(editedProject.getSize()));
+        reference->prepareToPlay(testRate, testBlock);
+        if (!alreadyPrepared) recalled->prepareToPlay(testRate, testBlock);
+        reopened->prepareToPlay(testRate, testBlock);
+        const auto expected = process(*reference, testBlock, note(36));
+        check(expected.getMagnitude(1, 0, testBlock) > .001f
+                  && expected.getMagnitude(0, 0, testBlock) == 0,
+              "Post-recall parameter fixture must sound only its edited right-panned track");
+        checkEqualAudio(process(*recalled, testBlock, note(36)), expected, 1.0e-6f,
+                        "Post-recall dry/mute/pan/master/pitch/AMP/filter/SRR controls on first audio");
+        checkEqualAudio(process(*reopened, testBlock, note(36)), expected, 1.0e-6f,
+                        "Saving post-recall controls before first audio");
+        recalled->servicePendingTransitions();
+        check(recalled->parameterValue("t1_pan") == 1 && recalled->parameterValue("t1_mute") == 0
+                  && std::abs(recalled->parameterValue("master") - .6f) < 1.0e-6f
+                  && recalled->parameterValue("delayMix") == 0 && recalled->parameterValue("reverbMix") == 0,
+              "UI synchronization replaced post-recall control edits");
+    }
+    passed("new/prepared project recall keeps later dry, mute, pan, master and extended DSP controls in first audio and save/reopen");
+}
+
+void testMidiCapacityAndEqualOffsetOrder(const juce::File& mono)
+{
+    auto processor = std::make_unique<TaktAudioProcessor>();
+    configureDry(*processor);
+    juce::String error;
+    check(processor->loadSample(0, mono, error), error.toStdString());
+    processor->setParameter("t1_machine", 1);
+    processor->setParameter("t1_ampMode", 2);
+    processor->setParameter("t1_ampSustain", 1);
+    processor->setParameter("t1_ampRelease", .001f);
+    processor->prepareToPlay(testRate, testBlock);
+    juce::MidiBuffer order;
+    for (int index = 0; index < 20; ++index)
+    {
+        order.addEvent(juce::MidiMessage::noteOn(1, 36, juce::uint8(110)), 0);
+        order.addEvent(juce::MidiMessage::noteOff(1, 36), 0);
+    }
+    const auto closed = process(*processor, testBlock, order);
+    processor->prepareToPlay(testRate, testBlock);
+    order.clear();
+    for (int index = 0; index < 20; ++index)
+    {
+        order.addEvent(juce::MidiMessage::noteOff(1, 36), 0);
+        order.addEvent(juce::MidiMessage::noteOn(1, 36, juce::uint8(110)), 0);
+    }
+    const auto open = process(*processor, testBlock, order);
+    check(magnitude(closed, 256) < 1.0e-6f && magnitude(open, 256) > .001f,
+          "Equal-offset MIDI sorting changed the host's note-on/note-off insertion order");
+
+    processor->prepareToPlay(testRate, testBlock);
+    const auto beforeMidi = processor->getDroppedMidiEvents();
+    juce::MidiBuffer overflow;
+    for (int index = 0; index < 600; ++index)
+        overflow.addEvent(juce::MidiMessage::noteOn(1, 36, juce::uint8(110)), 0);
+    overflow.addEvent(juce::MidiMessage::noteOff(1, 36), 0);
+    const auto released = process(*processor, testBlock, overflow);
+    check(processor->getDroppedMidiEvents() > beforeMidi,
+          "MIDI capacity overflow silently discarded events without updating its diagnostic counter");
+    check(magnitude(released, 256) < 1.0e-6f,
+          "A saturated MIDI burst discarded the final release and left an ADSR note held");
+
+    check(processor->loadSample(1, mono, error), error.toStdString());
+    processor->setParameter("t2_machine", 1);
+    processor->setParameter("t2_ampMode", 2);
+    processor->setParameter("t2_ampSustain", 1);
+    processor->setParameter("t2_ampRelease", .001f);
+    processor->prepareToPlay(testRate, testBlock);
+    auto held = note(36);
+    held.addEvent(juce::MidiMessage::noteOn(1, 37, juce::uint8(110)), 0);
+    check(magnitude(process(*processor, testBlock, held)) > .001f,
+          "Cannot establish held notes for release-only overflow");
+    juce::MidiBuffer releaseOnly;
+    for (int index = 0; index < 512; ++index)
+        releaseOnly.addEvent(juce::MidiMessage::noteOff(1, 36), 0);
+    releaseOnly.addEvent(juce::MidiMessage::noteOff(1, 37), 0);
+    check(magnitude(process(*processor, testBlock, releaseOnly), 256) < 1.0e-6f,
+          "Repeated releases for one track saturated capacity and discarded another held track's release");
+
+    const auto beforeUi = processor->getDroppedUiTriggers();
+    for (int index = 0; index < 600; ++index) processor->triggerTrack(0);
+    check(processor->getDroppedUiTriggers() > beforeUi,
+          "A full UI trigger FIFO silently discarded triggers without updating its diagnostic counter");
+    process(*processor, testBlock);
+    const auto afterDrain = processor->getDroppedUiTriggers();
+    processor->triggerTrack(0);
+    check(processor->getDroppedUiTriggers() == afterDrain,
+          "Draining the UI FIFO did not make space for later trigger requests");
+    passed("stable same-offset MIDI order; observable bounded MIDI/UI overflow; releases survive note-on saturation");
+}
+
+void pumpMessagesUntil(const std::function<bool()>& complete, const char* context)
+{
+    const auto deadline = juce::Time::getMillisecondCounterHiRes() + 10000;
+    while (!complete() && juce::Time::getMillisecondCounterHiRes() < deadline)
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+    check(complete(), context);
+}
+
+void testReentrantAsyncImport(const juce::File& mono, const juce::File& stereo)
+{
+    auto processor = std::make_unique<TaktAudioProcessor>();
+    struct HostStartsNextImport final : juce::AudioProcessorListener
+    {
+        HostStartsNextImport(TaktAudioProcessor& p, const juce::File& next) : owner(p), file(next)
+        { owner.addListener(this); }
+        ~HostStartsNextImport() override { owner.removeListener(this); }
+        void audioProcessorParameterChanged(juce::AudioProcessor*, int, float) override {}
+        void audioProcessorChanged(juce::AudioProcessor*, const ChangeDetails& change) override
+        {
+            if (!change.nonParameterStateChanged || started) return;
+            started = true;
+            owner.loadSampleAsync(0, file, [this](bool success, const juce::String& error)
+            {
+                check(success && error.isEmpty(), "The host callback's replacement import failed");
+                completed = true;
+            });
+            juce::MessageManager::callAsync([this]
+            {
+                incorrectPending = !completed && !owner.isSampleImportPending(0);
+                inspected = true;
+            });
+        }
+        TaktAudioProcessor& owner;
+        juce::File file;
+        bool started = false, completed = false, inspected = false, incorrectPending = false;
+    } listener(*processor, stereo);
+    int obsoleteCompletion = 0;
+    processor->loadSampleAsync(0, mono,
+        [&](bool, const juce::String&) { ++obsoleteCompletion; });
+    pumpMessagesUntil([&] { return listener.completed && listener.inspected; },
+                      "A host callback's replacement sample import did not complete");
+    check(!listener.incorrectPending && obsoleteCompletion == 0
+              && processor->getSampleName(0) == stereo.getFileNameWithoutExtension(),
+          "Publishing an import cleared a reentrant request's pending flag or delivered an obsolete completion");
+    passed("an import host notification can start a newer request without losing pending state or delivering an obsolete completion");
+}
+
+void testAsyncSampleImport(const juce::File& mono, const juce::File& stereo,
+                           const juce::File& directory)
+{
+    auto processor = std::make_unique<TaktAudioProcessor>();
+    int obsoleteCalls = 0, currentCalls = 0;
+    const auto first = processor->loadSampleAsync(0, mono,
+        [&](bool, const juce::String&) { ++obsoleteCalls; });
+    const auto second = processor->loadSampleAsync(0, stereo,
+        [&](bool success, const juce::String& error)
+        {
+            check(success && error.isEmpty(), "The current async sample import failed");
+            ++currentCalls;
+        });
+    check(first != 0 && second > first && processor->isSampleImportPending(0),
+          "Async imports did not publish distinct pending request tickets");
+    pumpMessagesUntil([&] { return currentCalls == 1; }, "Async import completion was not delivered");
+    check(obsoleteCalls == 0 && !processor->isSampleImportPending(0)
+              && processor->getSampleName(0) == stereo.getFileNameWithoutExtension(),
+          "A superseded async import overwrote the latest sample or invoked its stale callback");
+
+    bool navigationCompleted = false;
+    const auto originallySelectedSample = processor->getSample(1);
+    processor->loadSampleAsync(1, mono,
+        [&](bool success, const juce::String& error)
+        {
+            check(success && error.isEmpty(), "An async import into an inactive pattern failed");
+            navigationCompleted = true;
+        });
+    check(processor->setCurrentPattern(17), "Cannot navigate during an async import");
+    const auto newPatternSample = processor->getSample(1);
+    pumpMessagesUntil([&] { return navigationCompleted; }, "Inactive-pattern sample import did not complete");
+    check(processor->getCurrentPattern() == 17 && processor->getSample(1) == newPatternSample,
+          "An async import followed pattern navigation and replaced the active destination");
+    const auto destination = processor->getPatternSnapshot(0);
+    check(destination && destination->samples[1] != originallySelectedSample
+              && destination->samples[1]->name == mono.getFileNameWithoutExtension().toStdString(),
+          "An async import did not retain its originally requested pattern/track destination");
+
+    bool failed = false;
+    const auto beforeFailure = processor->getSample(2);
+    processor->loadSampleAsync(2, directory.getChildFile("does-not-exist.wav"),
+        [&](bool success, const juce::String& error)
+        {
+            check(!success && error.isNotEmpty(), "A failed async import did not report its error");
+            failed = true;
+        });
+    pumpMessagesUntil([&] { return failed; }, "Async import failure callback was not delivered");
+    check(processor->getSample(2) == beforeFailure && !processor->isSampleImportPending(2),
+          "An async import failure changed the previous sample or left a pending job");
+
+    int replacedPatternCalls = 0;
+    auto replacement = std::make_unique<TaktAudioProcessor::PatternSnapshot>(*processor->getPatternSnapshot(0));
+    const auto beforeReplacement = replacement->samples[5];
+    processor->loadSampleAsync(5, mono,
+        [&](bool, const juce::String&) { ++replacedPatternCalls; }, 0);
+    check(processor->setPatternSnapshot(0, *replacement), "Cannot replace an async import destination");
+    check(!processor->isSampleImportPending(5), "Replacing a pattern left its obsolete import pending");
+
+    int canceledCalls = 0;
+    const auto beforeCancel = processor->getSample(3);
+    processor->loadSampleAsync(3, mono, [&](bool, const juce::String&) { ++canceledCalls; });
+    processor->cancelSampleImport(3);
+    check(!processor->isSampleImportPending(3), "Canceling an async sample import left it pending");
+    bool barrier = false;
+    processor->loadSampleAsync(4, stereo,
+        [&](bool success, const juce::String& error)
+        {
+            check(success && error.isEmpty(), "Import cancellation barrier failed");
+            barrier = true;
+        });
+    pumpMessagesUntil([&] { return barrier; }, "Cancellation barrier import did not complete");
+    check(canceledCalls == 0 && processor->getSample(3) == beforeCancel,
+          "A canceled async import published data or called its obsolete completion");
+    check(replacedPatternCalls == 0 && processor->getPatternSnapshot(0)->samples[5] == beforeReplacement,
+          "An obsolete import overwrote a replacement pattern or invoked a canceled callback");
+
+    int destroyedCalls = 0;
+    auto shortLived = std::make_unique<TaktAudioProcessor>();
+    shortLived->loadSampleAsync(0, mono, [&](bool, const juce::String&) { ++destroyedCalls; });
+    shortLived.reset();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(5);
+    check(destroyedCalls == 0, "An import callback outlived its destroyed processor");
+
+    bool destroyedFromCompletion = false;
+    auto destroyInCallback = std::make_unique<TaktAudioProcessor>();
+    destroyInCallback->loadSampleAsync(0, mono,
+        [&](bool success, const juce::String& error)
+        {
+            check(success && error.isEmpty(), "Self-destruction import failed");
+            destroyInCallback.reset();
+            destroyedFromCompletion = true;
+        });
+    pumpMessagesUntil([&] { return destroyedFromCompletion; },
+                      "Destroying a processor from its import completion deadlocked");
+    passed("worker sample imports: newest request wins, captured pattern destination, failure, cancellation and processor lifetime");
+}
+
 void testMachinesAndModulationState()
 {
     auto sourceStorage = std::make_unique<TaktAudioProcessor>();
@@ -935,6 +1467,120 @@ void initialiseArrangement(TaktAudioProcessor& processor, const juce::File& samp
     right->slicePoints[0][0] = {.2f, .3f, .2f};
     check(processor.setPatternSnapshot(17, *right), "Cannot store pattern B02");
     check(processor.setPatternSnapshot(127, *left), "Cannot store pattern H16");
+}
+
+void testPatternSelectionAfterProjectRecall(const juce::File& mono)
+{
+    for (const bool alreadyPrepared : {false, true})
+    {
+        auto reference = std::make_unique<TaktAudioProcessor>();
+        auto recalled = std::make_unique<TaktAudioProcessor>();
+        initialiseArrangement(*reference, mono);
+        const auto project = stateOf(*reference);
+        if (alreadyPrepared)
+        {
+            recalled->prepareToPlay(testRate, testBlock);
+            process(*recalled, testBlock);
+        }
+        recalled->setStateInformation(project.getData(), static_cast<int>(project.getSize()));
+        check(reference->setCurrentPattern(17) && recalled->setCurrentPattern(17),
+              "Cannot select B02 after recall and before its first audio block");
+        reference->prepareToPlay(testRate, testBlock);
+        if (!alreadyPrepared) recalled->prepareToPlay(testRate, testBlock);
+        const auto expected = process(*reference, testBlock, note(36));
+        check(expected.getMagnitude(1, 0, testBlock) > .01f
+                  && expected.getMagnitude(0, 0, testBlock) == 0,
+              "Post-recall pattern-selection fixture must sound B02's right-panned kit");
+        checkEqualAudio(process(*recalled, testBlock, note(36)), expected, 1.0e-6f,
+                        "Normal queued Select after project Restore must apply B02's kit");
+        recalled->servicePendingTransitions();
+        check(recalled->getCurrentPattern() == 17 && recalled->parameterValue("t1_pan") == 1,
+              "Project Restore displaced a subsequent normal pattern selection");
+    }
+    passed("new/prepared project Restore followed by normal Select still activates the selected pattern's kit");
+}
+
+void testRecallReplacesPendingPatternSelection(const juce::File& mono, const juce::File& stereo)
+{
+    auto reference = std::make_unique<TaktAudioProcessor>();
+    auto recalled = std::make_unique<TaktAudioProcessor>();
+    configureDry(*reference);
+    configureDry(*recalled);
+    for (int track = 0; track < takt::numTracks; ++track)
+    {
+        reference->clearTrack(track);
+        recalled->clearTrack(track);
+    }
+    juce::String error;
+    check(reference->loadSample(0, mono, error), error.toStdString());
+    reference->setParameter("t1_pan", -1);
+    reference->setParameter("tempo", 120);
+    takt::Step incoming;
+    incoming.enabled = true;
+    reference->setStep(0, 0, incoming);
+    reference->setParameter("play", 1);
+    const auto project = stateOf(*reference);
+
+    check(recalled->loadSample(0, stereo, error), error.toStdString());
+    auto oldPattern = std::make_unique<TaktAudioProcessor::PatternSnapshot>(*recalled->getPatternSnapshot(0));
+    oldPattern->trackParameters[0][1] = 1;
+    oldPattern->steps[0][0] = {}; // Its old sample and sequence both differ from recall.
+    oldPattern->steps[1][0] = incoming;
+    check(recalled->setPatternSnapshot(17, *oldPattern), "Cannot establish the older B02 selection");
+    recalled->prepareToPlay(testRate, testBlock);
+    check(magnitude(process(*recalled, testBlock)) == 0,
+          "Pending-selection recall fixture must begin without sounding voices");
+    check(recalled->setCurrentPattern(17), "Cannot enqueue B02 before project recall");
+    // Do not process or re-prepare: the old Select is still ahead of Restore.
+    recalled->setStateInformation(project.getData(), static_cast<int>(project.getSize()));
+    reference->prepareToPlay(testRate, testBlock);
+    const auto expected = process(*reference, testBlock);
+    check(expected.getMagnitude(0, 0, testBlock) > .01f
+              && expected.getMagnitude(1, 0, testBlock) == 0,
+          "Pending-selection recall fixture must sound the new mono sample and first step");
+    checkEqualAudio(process(*recalled, testBlock), expected, 1.0e-6f,
+                    "Project Restore must replace both sample and sequence from an older queued Select");
+    recalled->servicePendingTransitions();
+    check(recalled->getCurrentPattern() == 0 && recalled->getSampleName(0) == mono.getFileNameWithoutExtension(),
+          "An older queued Select displaced recalled project metadata or sample");
+    compareSteps(recalled->getStep(0, 0), incoming);
+    check(!recalled->getStep(1, 0).enabled, "An older queued Select left its note in the recalled sequence");
+    passed("prepared project recall replaces an older queued pattern's sample and sequence before its first audio block");
+}
+
+void testSongRowSwingAutomation(const juce::File& mono)
+{
+    for (const float rowSwing : {-1.0f, .25f})
+    {
+        auto processor = std::make_unique<TaktAudioProcessor>();
+        configureDry(*processor);
+        for (int track = 0; track < takt::numTracks; ++track) processor->clearTrack(track);
+        juce::String error;
+        check(processor->loadSample(0, mono, error), error.toStdString());
+        processor->setParameter("tempo", 120);
+        processor->setParameter("swing", 0);
+        processor->setPatternLength(4);
+        processor->setTrackLength(0, 4);
+        takt::Step oddStep;
+        oddStep.enabled = true;
+        processor->setStep(0, 1, oddStep);
+        takt::Song song;
+        song.rowCount = 1;
+        song.rows[0].pattern = {0};
+        song.rows[0].swing = rowSwing;
+        check(processor->setSong(0, song) && processor->startSong(0), "Cannot start swing automation song");
+        processor->setParameter("play", 1);
+        processor->prepareToPlay(testRate, testBlock);
+        check(magnitude(process(*processor, testBlock)) == 0, "Song swing fixture started before its odd step");
+        processor->servicePendingTransitions();
+        processor->setParameter("swing", .5f); // The stored pattern still has zero swing.
+        const auto audio = renderSequence(*processor, 8000);
+        const int onset = (rowSwing < 0 ? 7500 : 6750) - testBlock;
+        check(magnitude(audio, 0, onset - 16) == 0 && magnitude(audio, onset, 128) > .001f,
+              rowSwing < 0 ? "Inherited Song swing ignored live automation"
+                           : "Live swing automation displaced the explicit Song row override");
+    }
+    passed("Song rows inherit live swing automation while explicit row swing retains its documented override");
 }
 
 void testPatternProject(const juce::File& mono)
@@ -1658,6 +2304,38 @@ ParameterIdentities parameterIdentities(TaktAudioProcessor& processor)
     return result;
 }
 
+void testEditorAsyncSampleImport(const juce::File& mono, const juce::File& stereo)
+{
+    auto processor = std::make_unique<TaktAudioProcessor>();
+    auto editor = std::make_unique<TaktAudioProcessorEditor>(*processor);
+    click(*editor, "family-src");
+    const auto beforeCancel = processor->getSample(0);
+    editor->filesDropped({mono.getFullPathName()}, 0, 0);
+    check(processor->isSampleImportPending(0)
+              && component<juce::Button>(*editor, "source-sample-import").getButtonText() == "CANCEL",
+          "The source import button did not expose cancellation while its worker was pending");
+    click(*editor, "source-sample-import");
+    check(!processor->isSampleImportPending(0) && processor->getSample(0) == beforeCancel,
+          "Clicking CANCEL did not retain the previous sample and cancel its request");
+
+    editor->filesDropped({stereo.getFullPathName()}, 0, 0);
+    click(*editor, "track-9");
+    const auto destinationBefore = processor->getSample(8);
+    pumpMessagesUntil([&] { return !processor->isSampleImportPending(0); },
+                      "Editor drag/drop import did not finish");
+    check(processor->getSampleName(0) == stereo.getFileNameWithoutExtension()
+              && processor->getSample(8) == destinationBefore,
+          "A drag/drop import followed UI track navigation instead of its captured destination");
+    editor->filesDropped({mono.getFullPathName()}, 0, 0);
+    check(processor->isSampleImportPending(8), "Track 9 import did not become pending");
+    editor.reset();
+    pumpMessagesUntil([&] { return !processor->isSampleImportPending(8); },
+                      "Closing the editor prevented its processor import from finishing");
+    check(processor->getSampleName(8) == mono.getFileNameWithoutExtension(),
+          "Closing the editor lost the imported sample");
+    passed("editor drag/drop is asynchronous; CANCEL retains samples; track navigation and editor close keep destinations safe");
+}
+
 void testEditorNavigation(const juce::File& stereo)
 {
     auto processorStorage = std::make_unique<TaktAudioProcessor>();
@@ -1845,6 +2523,66 @@ public:
 private:
     TaktAudioProcessor& processor;
 };
+
+void testControlAllAcrossAudioTransition(const juce::File& mono)
+{
+    auto processor = std::make_unique<TaktAudioProcessor>();
+    initialiseArrangement(*processor, mono);
+    check(processor->setChain({0, 17}), "Cannot prepare Control All transition chain");
+    TestPlayHead host;
+    processor->setParameter("hostSync", 1);
+    processor->setPlayHead(&host);
+    processor->prepareToPlay(testRate, testBlock);
+    renderWithHost(*processor, host, {512}, 12000, 120);
+    HostGestureListener gestures(*processor);
+    check(processor->beginControlAll(0, 1) && processor->updateControlAll("pan", -.3f),
+          "Cannot begin a Control All edit in the first sounding kit");
+    renderWithHost(*processor, host, {512}, 12512, 120, 12000);
+    check(processor->getCurrentPattern() == 17,
+          "Control All regression did not cross its automatic audio pattern boundary");
+    // No editor timer or transition service has mirrored the second kit yet.
+    processor->cancelControlAll();
+    processor->servicePendingTransitions();
+    check(!processor->isControlAllActive() && processor->parameterValue("t1_pan") == 1,
+          "Canceling a preceding kit's Control All baseline overwrote the new sounding pattern");
+    check(!gestures.nested && !gestures.unbalanced && gestures.active.empty()
+              && gestures.begins > 0 && gestures.begins == gestures.ends,
+          "An automatic pattern transition left Control All host gestures unbalanced");
+    passed("Control All cancellation after an unmirrored audio kit transition preserves the new kit and closes gestures");
+}
+
+void testDestinationPreviewAcrossAudioTransition(const juce::File& mono)
+{
+    const auto run = [&](bool closeEditor)
+    {
+        auto processor = std::make_unique<TaktAudioProcessor>();
+        initialiseArrangement(*processor, mono);
+        auto second = std::make_unique<TaktAudioProcessor::PatternSnapshot>(*processor->getPatternSnapshot(17));
+        second->trackParameters[0][36] = 9; // lfo1_destination in the current track layout.
+        check(processor->setPatternSnapshot(17, *second) && processor->setChain({0, 17}),
+              "Cannot prepare an automatic destination-preview transition");
+        TestPlayHead host;
+        processor->setParameter("hostSync", 1);
+        processor->setPlayHead(&host);
+        processor->prepareToPlay(testRate, testBlock);
+        auto editor = std::make_unique<TaktAudioProcessorEditor>(*processor);
+        click(*editor, "family-mod");
+        component<juce::Slider>(*editor, "encoder-D").setValue(4, juce::sendNotificationSync);
+        check(processor->parameterValue("t1_lfo1_destination") == 4,
+              "Cannot establish an unconfirmed destination preview");
+        renderWithHost(*processor, host, {512}, 24512, 120);
+        check(processor->getCurrentPattern() == 17,
+              "Destination preview regression did not cross an automatic audio boundary");
+        if (closeEditor) editor.reset();
+        else click(*editor, "navigation-no");
+        processor->servicePendingTransitions();
+        check(processor->parameterValue("t1_lfo1_destination") == 9,
+              "A stale LFO destination preview restored its old value into the newly sounding kit");
+    };
+    run(false);
+    run(true);
+    passed("NO and editor close discard old-pattern LFO destination previews after an automatic audio transition");
+}
 
 void testExtendedEditor(const juce::File& stereo)
 {
@@ -2399,7 +3137,19 @@ int main(int argc, char** argv)
         testState(mono, stereo);
         testMachinesAndModulationState();
         testControlAll();
+        testControlAllAcrossAudioTransition(mono);
         testExtendedAudio(temporary.directory);
+        testTransactionalReloadSave(mono, stereo);
+        testTransactionalProjectRecallSave(mono, stereo);
+        testCompressedSampleCache(mono);
+        testMusicalEditsBeforeFirstRecalledBlock(mono, stereo);
+        testParametersBeforeFirstRecalledBlock(mono);
+        testPatternSelectionAfterProjectRecall(mono);
+        testRecallReplacesPendingPatternSelection(mono, stereo);
+        testSongRowSwingAutomation(mono);
+        testMidiCapacityAndEqualOffsetOrder(mono);
+        testAsyncSampleImport(mono, stereo, temporary.directory);
+        testReentrantAsyncImport(mono, stereo);
         testPatternProject(mono);
         testPerformKitRecallLifetime(mono);
         testLegacyHostOriginMigration(mono);
@@ -2409,9 +3159,11 @@ int main(int argc, char** argv)
         testHostTransport(mono);
         if (screenshot != juce::File{})
         {
+            testEditorAsyncSampleImport(mono, stereo);
             testEditorNavigation(stereo);
             testPanelGestures();
             testExtendedEditor(stereo);
+            testDestinationPreviewAcrossAudioTransition(mono);
             testArrangementEditor(mono);
             testEditorKeyboard();
             testGui(screenshot);

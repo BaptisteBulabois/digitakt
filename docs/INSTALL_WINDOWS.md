@@ -1,6 +1,6 @@
 # Installer Takt II sous Windows et Ableton Live
 
-Ce guide concerne la branche de développement Takt II 0.3.0, Windows 10/11
+Ce guide concerne la branche de développement Takt II 0.3.1, Windows 10/11
 64 bits et Ableton Live 11 ou 12. La version stable 0.2.0 et son
 [guide](https://github.com/BaptisteBulabois/digitakt/blob/main/docs/INSTALL_WINDOWS.md)
 restent sur `main`.
@@ -8,9 +8,9 @@ Takt II est un instrument VST3 : il doit être chargé sur une piste MIDI.
 
 ## Méthode simple : télécharger le build GitHub
 
-Le [build Windows 0.3.0 validé](https://github.com/BaptisteBulabois/digitakt/actions/runs/37982391074/artifacts/11641331887)
-est disponible (connexion GitHub requise). Il contient le bundle complet,
-une capture du panneau et un fichier LISEZ-MOI.
+Les [builds Windows de la branche](https://github.com/BaptisteBulabois/digitakt/actions?query=branch%3Adevelopment%2F0.3-machines-modulation)
+fournissent, après validation, une archive contenant le bundle complet,
+une capture du panneau et un fichier LISEZ-MOI (connexion GitHub requise).
 
 Les envois sur la branche `development/0.3-machines-modulation` lancent une
 compilation Windows indépendante de celle de `main`.
@@ -18,7 +18,7 @@ compilation Windows indépendante de celle de `main`.
 1. Ouvrir le dépôt GitHub, puis l'onglet **Actions**.
 2. Ouvrir l'exécution **Build Windows VST3** de cette branche, marquée d'une
    coche verte.
-3. Dans **Artifacts**, télécharger `Takt-II-Windows-VST3-0.3-development`
+3. Dans **Artifacts**, télécharger `Takt-II-Windows-VST3-0.3.1-development`
    (connexion GitHub requise).
 4. Décompresser l'archive. Elle contient le dossier `Takt II.vst3`.
 5. Copier ce dossier complet dans :
@@ -38,18 +38,16 @@ Si aucune exécution verte n'est encore affichée, utiliser la méthode de compi
 ## Mettre à jour une installation existante
 
 1. Sauvegarder le projet Live, puis fermer Live.
-   Conserver une copie du projet et du bundle 0.2.0 avant l'essai : le nouveau
-   format d'état reste lisible par 0.3.0, mais pas par le binaire 0.2.0.
 2. Télécharger et décompresser le nouveau build comme indiqué ci-dessus.
 3. Remplacer le dossier complet `Takt II.vst3` dans
    `C:\Program Files\Common Files\VST3\` par le nouveau bundle.
 4. Rouvrir Live et réanalyser les plug-ins si nécessaire, puis ouvrir le projet
    existant : conserver son instance de Takt II pour retrouver ses réglages.
 
-La version 0.3.0 conserve l'identité VST3 et les identifiants des paramètres de
-la première version. Le rappel des anciens projets Live reste pris en charge ;
-les paramètres des nouvelles fonctions sont ajoutés après les paramètres
-historiques.
+La version 0.3.1 conserve l'identité VST3 et les identifiants des paramètres.
+À la demande de l'utilisateur, la compatibilité avec les anciennes versions
+n'est plus une exigence ; la sauvegarde et le rappel sont validés avec la
+version actuelle.
 
 ## Compiler soi-même
 
@@ -136,7 +134,7 @@ Lancer **Visual Studio Installer**, sélectionner **Modifier**, puis ajouter **D
 
 ## Workflow et périmètre
 
-Le [guide de la version 0.3.0](WORKFLOW_0_3.md) décrit les pages, les modes de
+Le [guide de la version 0.3.1](WORKFLOW_0_3.md) décrit les pages, les modes de
 jeu/édition, les machines, les arrangements et les opérations de restauration. Il distingue
 les gestes adaptés à la souris des fonctions du Digitakt II restant à développer.
 

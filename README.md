@@ -8,14 +8,21 @@ La priorité est maintenant la **fidélité de l'interface et du workflow musica
 
 Le manuel officiel **OS 1.17** et les notes des versions ont été analysés avec
 des agents. La [spécification de workflow](docs/WORKFLOW_SPEC.md) décrit les
-références et les étapes d'implémentation. Cette branche fournit **0.3.0 en développement** :
+références et les étapes d'implémentation. Cette branche fournit **0.3.1 en développement** :
 machines SRC, trois LFO par piste, enveloppes et filtres, conditions avancées,
 banques, chaînes et Song Mode. **La version stable 0.2.0 reste sur `main`.**
 
-![Interface de Takt II 0.3.0](docs/images/takt-ii-0.3.png)
+La 0.3.1 corrige la cohérence des sauvegardes pendant les restaurations,
+met les imports en arrière-plan, réutilise les samples compressés et réduit
+le travail répété du DSP et de l'interface. La compatibilité avec les anciennes
+versions n'est plus une exigence, à la demande de l'utilisateur.
+Le [compte rendu des corrections](docs/REVIEW_FIXES_0_3_1.md) détaille les
+changements, les mesures du moteur et leurs limites.
+
+![Interface de Takt II 0.3.1](docs/images/takt-ii-0.3.1.png)
 
 Le [guide du workflow 0.3](docs/WORKFLOW_0_3.md) explique les gestes,
-la compatibilité et les adaptations de cette branche. Le
+les imports, les arrangements et les adaptations de cette branche. Le
 [guide 0.2](docs/WORKFLOW_0_2.md) reste disponible pour l'installation stable.
 Les contrôles encore absents restent désactivés ; le travail restant est explicite.
 

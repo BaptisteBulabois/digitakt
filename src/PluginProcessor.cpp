@@ -2,6 +2,7 @@
 #include "PluginEditor.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace
 {
@@ -96,6 +97,34 @@ std::shared_ptr<const takt::Sample> decodeSample(const juce::MemoryBlock& block,
             std::memcpy(&value, &bytes, sizeof(value));
             if (!std::isfinite(value)) return {};
         }
+    return sample;
+}
+
+std::shared_ptr<const takt::Sample> readSampleFile(const juce::File& file, juce::String& error)
+{
+    // Each import has its own reader registry. A worker never shares a mutable
+    // AudioFormatManager with synchronous import or project restoration.
+    juce::AudioFormatManager registry;
+    registry.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader(registry.createReaderFor(file));
+    if (!reader) { error = "Choose a readable WAV, AIFF or FLAC file."; return {}; }
+    if (reader->lengthInSamples < 2 || reader->lengthInSamples > maxSampleFrames
+        || reader->lengthInSamples > reader->sampleRate * 60.0 || reader->numChannels == 0
+        || !std::isfinite(reader->sampleRate) || reader->sampleRate < 8000 || reader->sampleRate > 384000)
+    { error = "Sample must be between 2 frames and 60 seconds (8–384 kHz)."; return {}; }
+    const int count = static_cast<int>(reader->lengthInSamples);
+    juce::AudioBuffer<float> audio(2, count);
+    if (!reader->read(&audio, 0, count, 0, true, true))
+    { error = "Could not decode the sample."; return {}; }
+    if (reader->numChannels == 1) audio.copyFrom(1, 0, audio, 0, 0, count);
+    auto sample = std::make_shared<takt::Sample>();
+    sample->name = file.getFileNameWithoutExtension().toStdString();
+    sample->sampleRate = reader->sampleRate;
+    sample->left.assign(audio.getReadPointer(0), audio.getReadPointer(0) + count);
+    sample->right.assign(audio.getReadPointer(1), audio.getReadPointer(1) + count);
+    for (auto* channel : { &sample->left, &sample->right })
+        for (float& value : *channel) if (!std::isfinite(value)) value = 0;
+    error.clear();
     return sample;
 }
 }
@@ -236,11 +265,15 @@ TaktAudioProcessor::TaktAudioProcessor()
       parameters(*this, nullptr, "TAKT_II", createParameterLayout())
 {
     static_assert(std::size(trackNames) == trackParameterCount, "Track snapshot and parameter names must agree");
-    formats.registerBasicFormats();
+    importLifetime->owner = this;
     lengths.fill(16);
     for (int t = 0; t < takt::numTracks; ++t)
     {
+        importTickets[static_cast<size_t>(t)].store(0);
+        importDestinations[static_cast<size_t>(t)].store(-1);
+        importPending[static_cast<size_t>(t)].store(false);
         samples[static_cast<size_t>(t)] = takt::Engine::makeDemoSample(t);
+        cachedSampleData(samples[static_cast<size_t>(t)]);
         sampleDurations[static_cast<size_t>(t)].store(samples[static_cast<size_t>(t)]->left.size()
                                                    / samples[static_cast<size_t>(t)]->sampleRate);
         currentSteps[static_cast<size_t>(t)].store(-1);
@@ -276,6 +309,14 @@ TaktAudioProcessor::TaktAudioProcessor()
 
 TaktAudioProcessor::~TaktAudioProcessor()
 {
+    // Queued message callbacks carry the lifetime token rather than this. The
+    // worker is joined before processor members it could access are destroyed.
+    {
+        std::lock_guard<std::mutex> lock(importLifetime->mutex);
+        importLifetime->owner = nullptr;
+    }
+    for (auto& ticket : importTickets) ticket.fetch_add(1);
+    sampleImportPool.removeAllJobs(true, -1);
     commitControlAll();
     for (int t = 0; t < takt::numTracks; ++t)
         for (const char* name : trackNames)
@@ -345,6 +386,8 @@ void TaktAudioProcessor::prepareToPlay(double rate, int size)
     nextArrangementStepPpq = .25;
     audioArrangement.stop(true);
     engine.prepare(rate, size);
+    trackControlsValid.fill(false);
+    fxControlsValid = false;
     patternDirty.store(true);
     samplesDirty.store(true);
     syncControls();
@@ -374,6 +417,7 @@ void TaktAudioProcessor::syncControls()
     }
     const auto* sequenceOverlay = activeAudioSnapshot.load(std::memory_order_acquire);
     const auto* kitOverlay = activeAudioKitSnapshot.load(std::memory_order_acquire);
+    const auto previousGlobals = appliedGlobals;
     for (size_t p = 0; p < appliedGlobals.size(); ++p)
     {
         const auto* overlay = kitGlobal(p) ? kitOverlay : sequenceOverlay;
@@ -391,20 +435,42 @@ void TaktAudioProcessor::syncControls()
                     == transitionParameterVersions[static_cast<size_t>(t)][p].load()
                 ? kitOverlay->trackParameters[static_cast<size_t>(t)][p]
                 : trackValues[static_cast<size_t>(t)][p]->load();
-        auto p = makeTrackParams(t, values, pendingKit && kitOverlay
-            ? kitOverlay->slicePoints[static_cast<size_t>(t)] : slicePoints[static_cast<size_t>(t)]);
-        appliedTrackParams[static_cast<size_t>(t)] = p;
-        if (audioArrangement.mode() == takt::PatternChain::Mode::Song)
-            p.mute = (audioArrangement.current().muteMask & (1u << t)) != 0;
-        engine.setTrackParams(t, p);
+        const auto index = static_cast<size_t>(t);
+        const auto& points = pendingKit && kitOverlay ? kitOverlay->slicePoints[index] : slicePoints[index];
+        const bool songMute = audioArrangement.mode() == takt::PatternChain::Mode::Song
+            ? (audioArrangement.current().muteMask & (1u << t)) != 0 : values[14] > .5f;
+        const bool pointsEqual = std::equal(points.begin(), points.end(), lastSlicePoints[index].begin(),
+            [](const auto& a, const auto& b) { return a.start == b.start && a.end == b.end && a.loop == b.loop; });
+        if (!trackControlsValid[index] || values != lastTrackValues[index] || !pointsEqual
+            || songMute != lastSongMute[index])
+        {
+            auto p = makeTrackParams(t, values, points);
+            appliedTrackParams[index] = p;
+            p.mute = songMute;
+            engine.setTrackParams(t, p);
+            lastTrackValues[index] = values;
+            lastSlicePoints[index] = points;
+            lastSongMute[index] = songMute;
+            trackControlsValid[index] = true;
+        }
     }
     takt::FxParams fx;
     fx.delayMix = appliedGlobals[5]; fx.feedback = appliedGlobals[6];
     fx.delayBeats = appliedGlobals[7]; fx.reverbMix = appliedGlobals[8];
-    engine.setFx(fx);
-    engine.setChorus({appliedGlobals[10], appliedGlobals[11], appliedGlobals[12], appliedGlobals[13],
-                      appliedGlobals[14], appliedGlobals[15], appliedGlobals[16]});
-    engine.setSwing(appliedGlobals[3]);
+    if (!fxControlsValid || !std::equal(appliedGlobals.begin() + 5, appliedGlobals.begin() + 9,
+                                      previousGlobals.begin() + 5)) engine.setFx(fx);
+    if (!fxControlsValid || !std::equal(appliedGlobals.begin() + 10, appliedGlobals.end(), previousGlobals.begin() + 10))
+        engine.setChorus({appliedGlobals[10], appliedGlobals[11], appliedGlobals[12], appliedGlobals[13],
+                          appliedGlobals[14], appliedGlobals[15], appliedGlobals[16]});
+    fxControlsValid = true;
+    float swing = appliedGlobals[3];
+    if (audioArrangement.mode() == takt::PatternChain::Mode::Song)
+    {
+        const auto& row = audioArrangement.song(audioArrangement.currentSong())
+            .rows[static_cast<size_t>(audioArrangement.currentRow())];
+        if (row.swing >= 0.0f) swing = row.swing;
+    }
+    engine.setSwing(swing);
     engine.setFill(appliedGlobals[9] > .5f);
 }
 
@@ -474,7 +540,14 @@ void TaktAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     if (!requestedPlaying && arrangementWasPlaying) audioArrangement.stop(false);
     // Drain selections before PLAY: starting a saved chain/song activates its
     // first row immediately, instead of cueing it after an extra pattern.
-    drainArrangementCommands();
+    if (drainArrangementCommands())
+    {
+        // A project recall has already published its complete working state.
+        // Read it again after arrangement initialization for its song mutes,
+        // including any controls or edits received before this first callback.
+        syncControls();
+        if (!following) transport.bpm = appliedGlobals[2];
+    }
     const bool seek = following && previousHostClock && arrangementWasPlaying
         && std::abs(transport.ppq - expectedHostPpq) > transport.bpm / (60 * processingRate) * 1.5;
     if (requestedPlaying && (!arrangementWasPlaying || seek || following != previousHostClock))
@@ -502,17 +575,55 @@ void TaktAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     triggerFifo.finishedRead(firstCount + secondCount);
     for (const auto metadata : midi)
     {
-        auto message = metadata.getMessage();
-        if (!message.isNoteOn() && !message.isNoteOff()) continue;
-        const int track = message.getNoteNumber() - 36;
-        if (validTrack(track) && eventCount < static_cast<int>(events.size()))
-            events[static_cast<size_t>(eventCount++)] = { juce::jlimit(0, count - 1, metadata.samplePosition), track,
-                                                        message.getFloatVelocity(), 0,
-                appliedTrackParams[static_cast<size_t>(track)].sliceByNote ? message.getNoteNumber() : 60,
-                0, false, message.isNoteOff() };
+        // Inspect the non-owning view first: ignored SysEx must never allocate
+        // an owning MidiMessage (nor free its heap data) in the audio callback.
+        if (metadata.numBytes != 3 || metadata.data == nullptr) continue;
+        const auto status = metadata.data[0] & 0xf0;
+        if (status != 0x90 && status != 0x80) continue;
+        const int note = metadata.data[1] & 0x7f;
+        const int track = note - 36;
+        if (!validTrack(track)) continue;
+        const bool noteOff = status == 0x80 || (metadata.data[2] & 0x7f) == 0;
+        takt::TriggerEvent event{juce::jlimit(0, count - 1, metadata.samplePosition), track,
+            (metadata.data[2] & 0x7f) / 127.0f, 0,
+            appliedTrackParams[static_cast<size_t>(track)].sliceByNote ? note : 60, 0, false, noteOff};
+        if (eventCount < static_cast<int>(events.size())) events[static_cast<size_t>(eventCount++)] = event;
+        else
+        {
+            // Fixed capacity: count overflow; give a release priority over the
+            // newest queued note-on to avoid leaving an ADSR voice held. Keep
+            // chronological order by removing it and appending this release.
+            droppedMidiEvents.fetch_add(1, std::memory_order_relaxed);
+            if (noteOff)
+            {
+                int victim = -1;
+                for (int i = eventCount - 1; i >= 0; --i)
+                    if (!events[static_cast<size_t>(i)].noteOff)
+                    {
+                        victim = i;
+                        break;
+                    }
+                if (victim < 0)
+                {
+                    // A flood of duplicate releases must not starve another
+                    // track's release. Retain at least one off for each track.
+                    std::array<int, takt::numTracks> releases{};
+                    for (int i = 0; i < eventCount; ++i)
+                        ++releases[static_cast<size_t>(events[static_cast<size_t>(i)].track)];
+                    for (int i = eventCount - 1; i >= 0; --i)
+                        if (releases[static_cast<size_t>(events[static_cast<size_t>(i)].track)] > 1)
+                        { victim = i; break; }
+                }
+                if (victim >= 0)
+                {
+                    std::move(events.begin() + victim + 1, events.begin() + eventCount, events.begin() + victim);
+                    events[static_cast<size_t>(eventCount - 1)] = event;
+                }
+            }
+        }
     }
-    std::sort(events.begin(), events.begin() + eventCount,
-              [](const auto& a, const auto& b) { return a.sampleOffset < b.sampleOffset; });
+    // UI events have offset zero; MidiBuffer is already ordered by timestamp.
+    // Appending preserves its insertion order for equal-offset note-on/off.
     int offset = 0, nextEvent = 0;
     while (offset < count)
     {
@@ -784,7 +895,6 @@ TaktAudioProcessor::EditResult TaktAudioProcessor::clearSelection(EditScope scop
                 begin->lockPitch = false;
                 begin->lockCutoff = false;
                 begin->lockSlice = false;
-                begin->lockSlice = false;
             }
             else std::fill_n(begin, count, takt::Step{});
             undoEdit.revision = editRevision.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -804,8 +914,49 @@ void TaktAudioProcessor::retainSampleLocked(const std::shared_ptr<const takt::Sa
         retiredSamples.push_back(sample);
 }
 
+std::shared_ptr<const juce::MemoryBlock> TaktAudioProcessor::cachedSampleData(
+    const std::shared_ptr<const takt::Sample>& sample)
+{
+    if (!sample) return {};
+    {
+        std::lock_guard<std::mutex> lock(sampleCacheMutex);
+        const auto found = sampleCache.find(sample.get());
+        if (found != sampleCache.end() && !found->second.sample.expired()) return found->second.blob;
+    }
+    // Compression cannot hold the cache lock: an autosave of already-cached
+    // samples must not wait behind an unrelated long import on the worker.
+    auto blob = std::make_shared<const juce::MemoryBlock>(encodeSample(*sample));
+    sampleCompressionCount.fetch_add(1, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(sampleCacheMutex);
+    for (auto it = sampleCache.begin(); it != sampleCache.end();)
+        if (it->second.sample.expired()) it = sampleCache.erase(it); else ++it;
+    const auto found = sampleCache.find(sample.get());
+    if (found != sampleCache.end() && !found->second.sample.expired()) return found->second.blob;
+    sampleCache[sample.get()] = {sample, blob};
+    return blob;
+}
+
+void TaktAudioProcessor::cacheSampleData(const std::shared_ptr<const takt::Sample>& sample,
+                                       const juce::MemoryBlock& source)
+{
+    if (!sample) return;
+    auto blob = std::make_shared<const juce::MemoryBlock>(source);
+    std::lock_guard<std::mutex> lock(sampleCacheMutex);
+    for (auto it = sampleCache.begin(); it != sampleCache.end();)
+        if (it->second.sample.expired()) it = sampleCache.erase(it); else ++it;
+    sampleCache[sample.get()] = {sample, std::move(blob)};
+}
+
+void TaktAudioProcessor::cancelImportsForPatternLocked(int slot)
+{
+    ++importPatternVersions[static_cast<size_t>(slot)];
+    for (int t = 0; t < takt::numTracks; ++t)
+        if (importDestinations[static_cast<size_t>(t)].load() == slot) cancelSampleImport(t);
+}
+
 std::shared_ptr<const TaktAudioProcessor::PatternSnapshot> TaktAudioProcessor::capturePatternLocked() const
 {
+    if (serializationTarget) return serializationTarget;
     auto snapshot = std::make_shared<PatternSnapshot>();
     for (;;)
     {
@@ -864,6 +1015,13 @@ void TaktAudioProcessor::restorePattern(const PatternSnapshot& snapshot)
     {
         std::lock_guard<std::mutex> lock(controlMutex);
         if (restoringPattern) return;
+        auto target = std::make_shared<PatternSnapshot>(snapshot);
+        target->sourceSlot = currentPatternSlot.load();
+        target->sourceSong = currentSongSlot.load();
+        target->sourceRow = currentSongRow.load();
+        for (size_t p : {size_t{0}, size_t{1}, size_t{4}})
+            target->globalParameters[p] = globalValues[p]->load();
+        serializationTarget = std::move(target);
         restoringPattern = true;
         for (size_t t = 0; t < samples.size(); ++t)
             if (samples[t] != snapshot.samples[t]) retainSampleLocked(samples[t]);
@@ -890,6 +1048,7 @@ void TaktAudioProcessor::restorePattern(const PatternSnapshot& snapshot)
     {
         std::lock_guard<std::mutex> lock(controlMutex);
         restoringPattern = false;
+        serializationTarget.reset();
     }
     notifyPatternChanged();
 }
@@ -1031,6 +1190,7 @@ bool TaktAudioProcessor::setPatternSnapshot(int slot, const PatternSnapshot& sou
     for (const auto& track : source.trackParameters)
         for (float value : track) if (!std::isfinite(value)) return false;
     for (float value : source.globalParameters) if (!std::isfinite(value)) return false;
+    for (const auto& sample : source.samples) cachedSampleData(sample);
     auto snapshot = std::make_shared<PatternSnapshot>(source);
     snapshot->patternLength = juce::jlimit(1, takt::maxSteps, source.patternLength);
     for (auto& length : snapshot->lengths) length = juce::jlimit(1, takt::maxSteps, length);
@@ -1052,6 +1212,7 @@ bool TaktAudioProcessor::setPatternSnapshot(int slot, const PatternSnapshot& sou
         auto& stored = patternBank[static_cast<size_t>(slot)];
         if (stored) retiredPatterns.push_back({stored, nextArrangementSerial});
         stored = snapshot;
+        cancelImportsForPatternLocked(slot);
         active = slot == currentPatternSlot.load();
     }
     if (active) restorePattern(*snapshot);
@@ -1187,6 +1348,7 @@ void TaktAudioProcessor::reloadKit()
         std::lock_guard<std::mutex> lock(controlMutex);
         const auto& kit = patternBank[static_cast<size_t>(currentPatternSlot.load())];
         if (!kit) return;
+        cancelImportsForPatternLocked(currentPatternSlot.load());
         auto current = std::make_shared<PatternSnapshot>(*capturePatternLocked());
         current->samples = kit->samples;
         current->trackParameters = kit->trackParameters;
@@ -1207,6 +1369,7 @@ void TaktAudioProcessor::reloadKit()
 void TaktAudioProcessor::servicePendingTransitions()
 {
     if (servicingTransitions.exchange(true)) return;
+    validateControlAllDestination();
     const auto generation = audioTransitionGeneration.load(std::memory_order_acquire);
     const auto kitGeneration = audioKitGeneration.load(std::memory_order_acquire);
     if (generation == mirroredTransitionGeneration.load()
@@ -1242,6 +1405,7 @@ void TaktAudioProcessor::servicePendingTransitions()
         if (permanentPattern && permanentPattern != fallback)
             retiredPatterns.push_back({permanentPattern, nextArrangementSerial});
         permanentPattern = fallback;
+        serializationTarget = mirror;
         restoringPattern = true;
     }
     // A concurrent automation event wins over the transition baseline. Host
@@ -1261,6 +1425,7 @@ void TaktAudioProcessor::servicePendingTransitions()
     {
         std::lock_guard<std::mutex> lock(controlMutex);
         restoringPattern = false;
+        serializationTarget.reset();
         if (audioTransitionGeneration.load() == generation)
         {
             mirroredTransitionGeneration.store(generation);
@@ -1273,6 +1438,7 @@ void TaktAudioProcessor::servicePendingTransitions()
 
 void TaktAudioProcessor::applyAudioPattern(const PatternSnapshot& snapshot, bool applyKit)
 {
+    trackControlsValid.fill(false);
     audioSnapshotSequence.fetch_add(1, std::memory_order_acq_rel);
     for (int t = 0; t < takt::numTracks; ++t)
     {
@@ -1330,6 +1496,7 @@ void TaktAudioProcessor::applyAudioTransition(const takt::PatternChain::Transiti
             applyAudioPattern(*snapshot, transition.applyKit);
     if (transition.changed)
     {
+        trackControlsValid.fill(false);
         engine.setSwing(transition.swing);
         for (int t = 0; t < takt::numTracks; ++t)
             {
@@ -1342,8 +1509,14 @@ void TaktAudioProcessor::applyAudioTransition(const takt::PatternChain::Transiti
     publishArrangementPosition();
 }
 
-void TaktAudioProcessor::drainArrangementCommands()
+bool TaktAudioProcessor::drainArrangementCommands()
 {
+    // Publication of a project and its parameter callbacks is one transaction.
+    // Do not consume a partial batch, and never wait on the renderer. Holding
+    // this acquired lock also keeps snapshot owners stable through consumption.
+    std::unique_lock<std::mutex> lock(controlMutex, std::try_to_lock);
+    if (!lock.owns_lock() || restoringPattern) return false;
+    bool restored = false;
     int first = 0, count = 0, second = 0, secondCount = 0;
     arrangementFifo.prepareToRead(arrangementFifo.getNumReady(), first, count, second, secondCount);
     auto consume = [&](int offset, int size)
@@ -1370,6 +1543,27 @@ void TaktAudioProcessor::drainArrangementCommands()
                     audioArrangement.setPatternSettings({c.slot}, {p.patternLength, p.globalParameters[2], p.globalParameters[3], mute});
                     break;
                 }
+                case ArrangementCommand::Kind::Restore:
+                    audioArrangement.setPerformKit(c.flag);
+                    if (c.count >= 0) audioArrangement.selectSong(c.count, c.row);
+                    else audioArrangement.selectPattern({c.slot});
+                    // Unlike a musical pattern selection, recall already put
+                    // its kit and sequence into the mutable working state.
+                    // Reapplying the saved snapshot would erase later edits.
+                    audioSnapshotSequence.fetch_add(1, std::memory_order_acq_rel);
+                    activeAudioSnapshot.store(c.snapshot, std::memory_order_release);
+                    activeAudioKitSnapshot.store(c.snapshot, std::memory_order_release);
+                    mirroredTransitionGeneration.store(audioTransitionGeneration.load(), std::memory_order_release);
+                    mirroredKitGeneration.store(audioKitGeneration.load(), std::memory_order_release);
+                    audioSnapshotSequence.fetch_add(1, std::memory_order_release);
+                    trackControlsValid.fill(false);
+                    // Older selections may have run before this batch's Reset
+                    // and overwritten the first sync's samples or sequence.
+                    patternDirty.store(true);
+                    samplesDirty.store(true);
+                    if (arrangementOriginEnabled) engine.restartSequencer(true);
+                    restored = true;
+                    break;
                 case ArrangementCommand::Kind::Select:
                     arrangementOriginEnabled = arrangementOriginEnabled || c.flag;
                     applyAudioTransition(audioArrangement.selectPattern({c.slot}));
@@ -1406,6 +1600,7 @@ void TaktAudioProcessor::drainArrangementCommands()
     consume(first, count); consume(second, secondCount);
     arrangementFifo.finishedRead(count + secondCount);
     publishArrangementPosition();
+    return restored;
 }
 
 void TaktAudioProcessor::temporaryReloadPattern()
@@ -1415,6 +1610,7 @@ void TaktAudioProcessor::temporaryReloadPattern()
     {
         std::lock_guard<std::mutex> lock(controlMutex);
         snapshot = temporaryPattern ? temporaryPattern : permanentPattern;
+        if (snapshot) cancelImportsForPatternLocked(currentPatternSlot.load());
     }
     if (snapshot) restorePattern(*snapshot);
 }
@@ -1453,6 +1649,7 @@ bool TaktAudioProcessor::createSliceGrid(int track, int count)
     {
         std::lock_guard<std::mutex> lock(controlMutex);
         if (restoringPattern) return false;
+        auto target = std::make_shared<PatternSnapshot>(*capturePatternLocked());
         restoringPattern = true;
         auto& points = slicePoints[static_cast<size_t>(track)];
         points.fill(takt::SlicePoint{});
@@ -1463,12 +1660,16 @@ bool TaktAudioProcessor::createSliceGrid(int track, int count)
             point.end = static_cast<float>(slice + 1) / static_cast<float>(count);
             point.loop = point.start;
         }
+        target->slicePoints[static_cast<size_t>(track)] = points;
+        target->trackParameters[static_cast<size_t>(track)][26] = static_cast<float>(count);
+        serializationTarget = std::move(target);
         editRevision.fetch_add(1, std::memory_order_relaxed);
     }
     setParameter(trackParameterID(track, "sliceCount"), static_cast<float>(count));
     {
         std::lock_guard<std::mutex> lock(controlMutex);
         restoringPattern = false;
+        serializationTarget.reset();
     }
     notifyPatternChanged();
     return true;
@@ -1481,6 +1682,8 @@ bool TaktAudioProcessor::beginControlAll(int activeTrack, std::uint16_t trackMas
     std::lock_guard<std::mutex> lock(controlMutex);
     if (restoringPattern || controlAll.active) return false;
     controlAll.activeTrack = activeTrack;
+    controlAll.sourceSlot = currentPatternSlot.load();
+    controlAll.sourceKitGeneration = audioKitGeneration.load();
     controlAll.mask = static_cast<std::uint16_t>(trackMask | (1u << activeTrack));
     controlAll.changed.fill(false);
     for (size_t track = 0; track < controlAll.baseline.size(); ++track)
@@ -1490,9 +1693,29 @@ bool TaktAudioProcessor::beginControlAll(int activeTrack, std::uint16_t trackMas
     return true;
 }
 
+bool TaktAudioProcessor::validateControlAllDestination()
+{
+    ControlAllTransaction expired;
+    {
+        std::lock_guard<std::mutex> lock(controlMutex);
+        if (!controlAll.active) return false;
+        if (controlAll.sourceSlot == currentPatternSlot.load()
+            && controlAll.sourceKitGeneration == audioKitGeneration.load()) return true;
+        // The baseline belongs to the preceding kit. End its host gestures
+        // without copying those values into the newly sounding pattern.
+        expired = controlAll;
+        controlAll.active = false;
+    }
+    for (int track = 0; track < takt::numTracks; ++track)
+        if ((expired.mask & (1u << track)) != 0)
+            for (size_t p = 0; p < trackParameterCount; ++p)
+                if (expired.changed[p]) parameters.getParameter(parameterIDs[static_cast<size_t>(track)][p])->endChangeGesture();
+    return false;
+}
+
 bool TaktAudioProcessor::updateControlAll(const juce::String& suffix, float activeTrackValue)
 {
-    if (!std::isfinite(activeTrackValue)) return false;
+    if (!std::isfinite(activeTrackValue) || !validateControlAllDestination()) return false;
     size_t index = std::size(trackNames);
     for (size_t candidate = 0; candidate < std::size(trackNames); ++candidate)
         if (suffix == trackNames[candidate]) { index = candidate; break; }
@@ -1502,9 +1725,21 @@ bool TaktAudioProcessor::updateControlAll(const juce::String& suffix, float acti
     {
         std::lock_guard<std::mutex> lock(controlMutex);
         if (!controlAll.active || restoringPattern) return false;
+        if (controlAll.sourceSlot != currentPatternSlot.load()
+            || controlAll.sourceKitGeneration != audioKitGeneration.load()) return false;
         transaction = controlAll;
         startGesture = !controlAll.changed[index];
         controlAll.changed[index] = true;
+        auto target = std::make_shared<PatternSnapshot>(*capturePatternLocked());
+        const float delta = activeTrackValue - transaction.baseline[static_cast<size_t>(transaction.activeTrack)][index];
+        for (size_t track = 0; track < target->trackParameters.size(); ++track)
+            if ((transaction.mask & (1u << track)) != 0)
+            {
+                const auto* parameter = parameters.getParameter(parameterIDs[track][index]);
+                target->trackParameters[track][index] = parameter->convertFrom0to1(parameter->convertTo0to1(
+                    transaction.baseline[track][index] + delta));
+            }
+        serializationTarget = std::move(target);
         restoringPattern = true;
     }
     const float delta = activeTrackValue - transaction.baseline[static_cast<size_t>(transaction.activeTrack)][index];
@@ -1519,6 +1754,7 @@ bool TaktAudioProcessor::updateControlAll(const juce::String& suffix, float acti
     {
         std::lock_guard<std::mutex> lock(controlMutex);
         restoringPattern = false;
+        serializationTarget.reset();
     }
     return true;
 }
@@ -1541,11 +1777,21 @@ void TaktAudioProcessor::commitControlAll()
 
 void TaktAudioProcessor::cancelControlAll()
 {
+    if (!validateControlAllDestination()) return;
     ControlAllTransaction transaction;
     {
         std::lock_guard<std::mutex> lock(controlMutex);
         if (!controlAll.active || restoringPattern) return;
+        if (controlAll.sourceSlot != currentPatternSlot.load()
+            || controlAll.sourceKitGeneration != audioKitGeneration.load()) return;
         transaction = controlAll;
+        auto target = std::make_shared<PatternSnapshot>(*capturePatternLocked());
+        for (size_t track = 0; track < target->trackParameters.size(); ++track)
+            if ((transaction.mask & (1u << track)) != 0)
+                for (size_t parameter = 0; parameter < trackParameterCount; ++parameter)
+                    if (transaction.changed[parameter])
+                        target->trackParameters[track][parameter] = transaction.baseline[track][parameter];
+        serializationTarget = std::move(target);
         restoringPattern = true;
         controlAll.active = false;
     }
@@ -1561,6 +1807,7 @@ void TaktAudioProcessor::cancelControlAll()
     {
         std::lock_guard<std::mutex> lock(controlMutex);
         restoringPattern = false;
+        serializationTarget.reset();
     }
 }
 
@@ -1600,6 +1847,7 @@ void TaktAudioProcessor::triggerTrack(int track, float velocity)
         event = { 0, track, juce::jlimit(0.0f, 1.0f, velocity), 0 };
         event.gateBeats = .25;
     }
+    else droppedUiTriggers.fetch_add(1, std::memory_order_relaxed);
     triggerFifo.finishedWrite(count);
 }
 
@@ -1614,6 +1862,7 @@ void TaktAudioProcessor::triggerSlice(int track, int slice, float velocity)
         event = {0, track, juce::jlimit(0.0f, 1.0f, velocity), 0, 60, slice, true};
         event.gateBeats = .25;
     }
+    else droppedUiTriggers.fetch_add(1, std::memory_order_relaxed);
     triggerFifo.finishedWrite(count);
 }
 
@@ -1622,29 +1871,122 @@ bool TaktAudioProcessor::loadSample(int track, const juce::File& file, juce::Str
     if (!validTrack(track)) { error = "Invalid track"; return false; }
     servicePendingTransitions();
     releaseUnusedSamples();
-    std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
-    if (!reader) { error = "Choose a readable WAV, AIFF or FLAC file."; return false; }
-    if (reader->lengthInSamples < 2 || reader->lengthInSamples > maxSampleFrames
-        || reader->lengthInSamples > reader->sampleRate * 60.0 || reader->numChannels == 0
-        || reader->sampleRate < 8000 || reader->sampleRate > 384000)
-    { error = "Sample must be between 2 frames and 60 seconds (8–384 kHz)."; return false; }
-    const int count = static_cast<int>(reader->lengthInSamples);
-    juce::AudioBuffer<float> audio(2, count);
-    if (!reader->read(&audio, 0, count, 0, true, true)) { error = "Could not decode the sample."; return false; }
-    if (reader->numChannels == 1) audio.copyFrom(1, 0, audio, 0, 0, count);
-    auto sample = std::make_shared<takt::Sample>();
-    sample->name = file.getFileNameWithoutExtension().toStdString();
-    sample->sampleRate = reader->sampleRate;
-    sample->left.assign(audio.getReadPointer(0), audio.getReadPointer(0) + count);
-    sample->right.assign(audio.getReadPointer(1), audio.getReadPointer(1) + count);
-    for (auto* channel : { &sample->left, &sample->right })
-        for (float& v : *channel) if (!std::isfinite(v)) v = 0;
+    const auto ticket = importTickets[static_cast<size_t>(track)].fetch_add(1) + 1;
+    importPending[static_cast<size_t>(track)].store(false);
+    const int slot = currentPatternSlot.load();
+    importDestinations[static_cast<size_t>(track)].store(slot);
+    std::uint64_t version = 0;
     {
         std::lock_guard<std::mutex> lock(controlMutex);
-        retainSampleLocked(samples[static_cast<size_t>(track)]);
-        samples[static_cast<size_t>(track)] = std::move(sample);
-        sampleDurations[static_cast<size_t>(track)].store(count / reader->sampleRate);
-        samplesDirty.store(true);
+        version = importPatternVersions[static_cast<size_t>(slot)];
+    }
+    auto sample = readSampleFile(file, error);
+    if (!sample) return false;
+    cachedSampleData(sample);
+    return publishImportedSample(track, slot, ticket, version, sample, error);
+}
+
+std::uint64_t TaktAudioProcessor::loadSampleAsync(int track, const juce::File& file,
+    SampleImportCompletion completion, int destinationPattern)
+{
+    if (!validTrack(track) || destinationPattern < -1 || destinationPattern >= takt::patternSlots)
+    {
+        if (completion) completion(false, "Invalid sample destination.");
+        return 0;
+    }
+    servicePendingTransitions();
+    const auto index = static_cast<size_t>(track);
+    const int slot = destinationPattern >= 0 ? destinationPattern : currentPatternSlot.load();
+    std::uint64_t version = 0;
+    {
+        std::lock_guard<std::mutex> lock(controlMutex);
+        if (restoringPattern || !ensurePatternLocked(slot)) version = std::numeric_limits<std::uint64_t>::max();
+        else version = importPatternVersions[static_cast<size_t>(slot)];
+    }
+    if (version == std::numeric_limits<std::uint64_t>::max())
+    {
+        if (completion) completion(false, "Pattern update is busy. Try the import again.");
+        return 0;
+    }
+    const auto ticket = importTickets[index].fetch_add(1) + 1;
+    importDestinations[index].store(slot);
+    importPending[index].store(true);
+    const std::weak_ptr<ImportLifetime> lifetime = importLifetime;
+    sampleImportPool.addJob([this, lifetime, track, slot, ticket, version, file, completion = std::move(completion)]
+    {
+        if (importTickets[static_cast<size_t>(track)].load() != ticket) return;
+        juce::String error;
+        auto sample = readSampleFile(file, error);
+        if (importTickets[static_cast<size_t>(track)].load() != ticket) return;
+        if (sample) cachedSampleData(sample);
+        if (importTickets[static_cast<size_t>(track)].load() != ticket) return;
+        juce::MessageManager::callAsync([lifetime, track, slot, ticket, version, sample = std::move(sample),
+                                       error, completion]() mutable
+        {
+            const auto guard = lifetime.lock();
+            if (!guard) return;
+            bool result = false;
+            {
+                std::lock_guard<std::mutex> lifetimeLock(guard->mutex);
+                auto* owner = guard->owner;
+                if (!owner || owner->importTickets[static_cast<size_t>(track)].load() != ticket) return;
+                if (sample) result = owner->publishImportedSample(track, slot, ticket, version, sample, error);
+                // A synchronous host notification may request a newer import.
+                // Its busy flag and completion belong to that newer ticket.
+                if (owner->importTickets[static_cast<size_t>(track)].load() != ticket) return;
+                owner->importPending[static_cast<size_t>(track)].store(false);
+            }
+            // User code may close the editor or destroy the processor. Never
+            // retain the lifetime mutex (or access owner) across this call.
+            if (completion) completion(result, error);
+        });
+    });
+    return ticket;
+}
+
+void TaktAudioProcessor::cancelSampleImport(int track)
+{
+    if (!validTrack(track)) return;
+    importTickets[static_cast<size_t>(track)].fetch_add(1);
+    importPending[static_cast<size_t>(track)].store(false);
+}
+
+bool TaktAudioProcessor::isSampleImportPending(int track) const
+{
+    return validTrack(track) && importPending[static_cast<size_t>(track)].load();
+}
+
+bool TaktAudioProcessor::publishImportedSample(int track, int slot, std::uint64_t ticket,
+    std::uint64_t patternVersion, const std::shared_ptr<const takt::Sample>& sample, juce::String& error)
+{
+    servicePendingTransitions();
+    {
+        std::lock_guard<std::mutex> lock(controlMutex);
+        const auto index = static_cast<size_t>(track);
+        if (importTickets[index].load() != ticket || restoringPattern
+            || importPatternVersions[static_cast<size_t>(slot)] != patternVersion)
+        { error = "Import cancelled: its destination pattern was replaced."; return false; }
+        if (slot == currentPatternSlot.load())
+        {
+            retainSampleLocked(samples[index]);
+            samples[index] = sample;
+            sampleDurations[index].store(sample->left.size() / sample->sampleRate);
+            samplesDirty.store(true);
+        }
+        else
+        {
+            const auto current = ensurePatternLocked(slot);
+            if (!current) { error = "Pattern update queue is full. Try the import again."; return false; }
+            auto target = std::make_shared<PatternSnapshot>(*current);
+            target->samples[index] = sample;
+            ArrangementCommand command;
+            command.kind = ArrangementCommand::Kind::UpdatePattern;
+            command.slot = slot; command.snapshot = target.get();
+            if (!enqueueArrangementLocked(command))
+            { error = "Pattern update queue is full. Try the import again."; return false; }
+            retiredPatterns.push_back({current, nextArrangementSerial});
+            patternBank[static_cast<size_t>(slot)] = std::move(target);
+        }
         editRevision.fetch_add(1, std::memory_order_relaxed);
     }
     error.clear();
@@ -1672,8 +2014,62 @@ int TaktAudioProcessor::getCurrentStep(int track) const
     return validTrack(track) ? currentSteps[static_cast<size_t>(track)].load() : -1;
 }
 
+TaktAudioProcessor::UiSnapshot TaktAudioProcessor::getUiSnapshot(
+    int selectedTrack, int selectedPage, int selectedStep, int selectedSong) const
+{
+    UiSnapshot result;
+    selectedTrack = juce::jlimit(0, takt::numTracks - 1, selectedTrack);
+    selectedPage = juce::jlimit(0, 7, selectedPage);
+    selectedStep = juce::jlimit(0, takt::maxSteps - 1, selectedStep);
+    selectedSong = juce::jlimit(0, takt::songSlots - 1, selectedSong);
+    std::lock_guard<std::mutex> lock(controlMutex);
+    for (;;)
+    {
+        const auto version = audioSnapshotSequence.load(std::memory_order_acquire);
+        if ((version & 1u) != 0) continue;
+        const auto* sequence = activeAudioSnapshot.load(std::memory_order_acquire);
+        const auto* kit = activeAudioKitSnapshot.load(std::memory_order_acquire);
+        const bool pendingSequence = audioTransitionGeneration.load() != mirroredTransitionGeneration.load();
+        const bool pendingKit = audioKitGeneration.load() != mirroredKitGeneration.load();
+        const auto* target = serializationTarget.get();
+        const auto& sequenceSteps = target ? target->steps : pendingSequence && sequence ? sequence->steps : steps;
+        const auto& sequenceLengths = target ? target->lengths : pendingSequence && sequence ? sequence->lengths : lengths;
+        const auto& kitSamples = target ? target->samples : pendingKit && kit ? kit->samples : samples;
+        const auto& kitPoints = target ? target->slicePoints : pendingKit && kit ? kit->slicePoints : slicePoints;
+        for (size_t t = 0; t < result.currentSteps.size(); ++t)
+        {
+            result.currentSteps[t] = currentSteps[t].load();
+            const int current = result.currentSteps[t];
+            result.currentTrigEnabled[t] = current >= 0 && current < takt::maxSteps
+                && sequenceSteps[t][static_cast<size_t>(current)].enabled;
+        }
+        const auto track = static_cast<size_t>(selectedTrack);
+        std::copy_n(sequenceSteps[track].begin() + selectedPage * 16, 16, result.visibleSteps.begin());
+        result.selectedStepValue = sequenceSteps[track][static_cast<size_t>(selectedStep)];
+        result.trackLength = sequenceLengths[track];
+        result.patternLength = target ? target->patternLength : pendingSequence && sequence
+            ? sequence->patternLength : patternLength;
+        result.sample = kitSamples[track];
+        result.slicePoints = kitPoints[track];
+        result.currentPattern = target ? target->sourceSlot : currentPatternSlot.load();
+        result.currentSong = target ? target->sourceSong : currentSongSlot.load();
+        result.currentSongRow = target ? target->sourceRow : currentSongRow.load();
+        result.queuedPattern = queuedPatternSlot.load();
+        result.arrangementMode = arrangementMode.load();
+        result.performKit = performKit.load();
+        result.canUndo = canUndoEditLocked();
+        for (int s = 0; s < takt::songSlots; ++s)
+            result.songRowCounts[static_cast<size_t>(s)] = songMetadata.song(s).rowCount;
+        result.song = songMetadata.song(selectedSong);
+        if (audioSnapshotSequence.load(std::memory_order_acquire) == version) break;
+    }
+    result.sampleName = result.sample ? juce::String(result.sample->name) : "No sample";
+    return result;
+}
+
 void TaktAudioProcessor::releaseUnusedSamples()
 {
+    {
     std::lock_guard<std::mutex> lock(controlMutex);
     const auto serial = consumedArrangementSerial.load(std::memory_order_acquire);
     const auto* active = activeAudioSnapshot.load(std::memory_order_acquire);
@@ -1688,11 +2084,14 @@ void TaktAudioProcessor::releaseUnusedSamples()
         }), retiredPatterns.end());
     retiredSamples.erase(std::remove_if(retiredSamples.begin(), retiredSamples.end(),
                         [](const auto& sample) { return sample.use_count() == 1; }), retiredSamples.end());
+    }
+    std::lock_guard<std::mutex> cacheLock(sampleCacheMutex);
+    for (auto it = sampleCache.begin(); it != sampleCache.end();)
+        if (it->second.sample.expired()) it = sampleCache.erase(it); else ++it;
 }
 
 void TaktAudioProcessor::getStateInformation(juce::MemoryBlock& destination)
 {
-    releaseUnusedSamples();
     std::shared_ptr<const PatternSnapshot> active;
     decltype(patternBank) bank;
     std::array<takt::Song, takt::songSlots> songs{};
@@ -1731,9 +2130,8 @@ void TaktAudioProcessor::getStateInformation(juce::MemoryBlock& destination)
             if (auto child = state.getChildWithProperty("id", parameterIDs[static_cast<size_t>(t)][p]); child.isValid())
                 child.setProperty("value", active->trackParameters[static_cast<size_t>(t)][p], nullptr);
     for (size_t p = 0; p < std::size(globalNames); ++p)
-        if (p != 0 && p != 1 && p != 4)
-            if (auto child = state.getChildWithProperty("id", globalNames[p]); child.isValid())
-                child.setProperty("value", active->globalParameters[p], nullptr);
+        if (auto child = state.getChildWithProperty("id", globalNames[p]); child.isValid())
+            child.setProperty("value", active->globalParameters[p], nullptr);
 
     std::vector<std::shared_ptr<const takt::Sample>> pool;
     auto sampleIndex = [&](const std::shared_ptr<const takt::Sample>& sample)
@@ -1763,7 +2161,7 @@ void TaktAudioProcessor::getStateInformation(juce::MemoryBlock& destination)
             {
                 track.setProperty("sampleName", juce::String(sample->name), nullptr);
                 track.setProperty("sampleRef", sampleIndex(sample), nullptr);
-                if (embedded) track.setProperty("sampleData", juce::var(encodeSample(*sample)), nullptr);
+                if (embedded) track.setProperty("sampleData", juce::var(*cachedSampleData(sample)), nullptr);
             }
             for (const auto& value : snapshot.steps[index])
             {
@@ -1848,7 +2246,7 @@ void TaktAudioProcessor::getStateInformation(juce::MemoryBlock& destination)
         juce::ValueTree sample("SAMPLE");
         sample.setProperty("id", static_cast<int>(p), nullptr);
         sample.setProperty("name", juce::String(pool[p]->name), nullptr);
-        sample.setProperty("data", juce::var(encodeSample(*pool[p])), nullptr);
+        sample.setProperty("data", juce::var(*cachedSampleData(pool[p])), nullptr);
         poolTree.addChild(sample, -1, nullptr);
     }
     state.addChild(poolTree, -1, nullptr);
@@ -1922,6 +2320,7 @@ void TaktAudioProcessor::setStateInformation(const void* data, int size)
                 if (!blob) return;
                 auto sample = decodeSample(*blob, item["name"].toString());
                 if (!sample) return;
+                cacheSampleData(sample, *blob);
                 pool.push_back(std::move(sample));
             }
         }
@@ -1946,6 +2345,7 @@ void TaktAudioProcessor::setStateInformation(const void* data, int size)
                 if (!blob) return false;
                 sample = decodeSample(*blob, track["sampleName"].toString());
                 if (!sample) return false;
+                if (legacy || !track.hasProperty("sampleRef") || pool.empty()) cacheSampleData(sample, *blob);
             }
             if (!legacy && track.hasProperty("sampleRef") && !pool.empty())
             {
@@ -2115,6 +2515,12 @@ void TaktAudioProcessor::setStateInformation(const void* data, int size)
             if (old) retiredPatterns.push_back({old, nextArrangementSerial + 1});
         if (permanentPattern) retiredPatterns.push_back({permanentPattern, nextArrangementSerial + 1});
         for (const auto& sample : samples) retainSampleLocked(sample);
+        active->sourceSlot = activeSlot;
+        active->sourceSong = songSlot;
+        active->sourceRow = songRow;
+        serializationTarget = active;
+        for (auto& version : importPatternVersions) ++version;
+        for (int t = 0; t < takt::numTracks; ++t) cancelSampleImport(t);
         restoringPattern = true;
         steps = active->steps; lengths = active->lengths; samples = active->samples;
         slicePoints = active->slicePoints; patternLength = active->patternLength;
@@ -2147,19 +2553,9 @@ void TaktAudioProcessor::setStateInformation(const void* data, int size)
             enqueueArrangementLocked(command);
         }
         command = {};
-        command.kind = ArrangementCommand::Kind::Select; command.slot = activeSlot;
-        enqueueArrangementLocked(command);
-        if (songSlot >= 0)
-        {
-            command = {};
-            command.kind = ArrangementCommand::Kind::Song; command.slot = songSlot; command.row = songRow;
-            enqueueArrangementLocked(command);
-        }
-        command = {};
-        command.kind = ArrangementCommand::Kind::ReloadKit; command.snapshot = active.get();
-        enqueueArrangementLocked(command);
-        command = {};
-        command.kind = ArrangementCommand::Kind::PerformKit; command.flag = nextPerform;
+        command.kind = ArrangementCommand::Kind::Restore;
+        command.slot = activeSlot; command.count = songSlot; command.row = songRow;
+        command.snapshot = active.get(); command.flag = nextPerform;
         enqueueArrangementLocked(command);
     }
     parameters.replaceState(state);
@@ -2168,6 +2564,7 @@ void TaktAudioProcessor::setStateInformation(const void* data, int size)
         mirroredTransitionGeneration.store(audioTransitionGeneration.load());
         mirroredKitGeneration.store(audioKitGeneration.load());
         restoringPattern = false;
+        serializationTarget.reset();
     }
     // DAW recall does not mark the project dirty. The audio commands retain
     // all samples/snapshots until their consumption and active use are done.

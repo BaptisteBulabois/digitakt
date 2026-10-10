@@ -78,6 +78,7 @@ private:
     void confirmAction();
     void finishControlAll(bool cancel);
     void cancelDestinationPreview();
+    void discardStaleDestinationPreview();
     int currentMachine() const;
     int currentSliceCount() const;
     takt::SlicePoint effectiveSlicePoint(int index) const;
@@ -85,6 +86,7 @@ private:
     void formatSlider(juce::Slider&, ValueFormat);
     void refreshSteps();
     void refreshControls();
+    void refreshUiSnapshot();
     void changeStep(const std::function<void(takt::Step&)>&);
     void editSelection(int action);
     void undoEdit();
@@ -92,6 +94,9 @@ private:
     bool editingText() const;
     void chooseSample();
     void importSample(const juce::File&);
+    void importSample(const juce::File&, int destinationTrack, int destinationPattern);
+    void cancelSelectedImport();
+    void refreshImportControls();
     void showStatus(const juce::String&, bool error = false);
     void updateVisibility();
     void internalPlayPause();
@@ -154,6 +159,7 @@ private:
     bool linkedSlicePoints = true;
     double sliceZoom = 1.0, slicePosition = 0.0, sliceVerticalZoom = 1.0;
     juce::String pendingDestination;
+    int pendingDestinationPattern = -1, pendingDestinationTrack = -1;
     float previousDestination = 0.0f;
     Family family = Family::Source;
     View view = View::Parameters;
@@ -161,7 +167,18 @@ private:
     bool gridRecording = true, helpVisible = false;
     bool toolsVisible = false;
     bool refreshing = false;
+    bool updatingTimer = false;
+    TaktAudioProcessor::UiSnapshot uiSnapshot;
+    bool displayedHostClock = false, displayedPlaying = false;
     float displayedPeak = 0.0f;
+    float displayedTempo = 120.0f;
+    juce::String lastOledContents;
+    int displayedPlayingPage = -2;
+    int displayedCurrentStep = -1, displayedTrackLength = 16;
+    int timerSliceCount = 1;
+    std::vector<float> waveformMarkers;
+    unsigned int timerTicks = 0;
+    std::uint64_t displayedDroppedTriggers = 0, displayedDroppedMidi = 0;
     double statusExpiry = 0.0;
     juce::String lastSampleName;
     std::shared_ptr<const takt::Sample> lastSample;

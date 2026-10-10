@@ -14,6 +14,9 @@ namespace takt
 constexpr int numTracks = 16;
 constexpr int maxSteps = 128;
 
+// Bounded master-bus saturation. Exposed for numerical/peak-limit verification.
+float masterSoftClip(float input) noexcept;
+
 struct Sample
 {
     std::vector<float> left, right;
@@ -146,6 +149,12 @@ private:
         bool sliceLocked = false;
         bool gateOpen = true, filterEnvelopePending = false;
         double gateRemainingBeats = -1.0, filterEnvelopeDelayFrames = 0.0;
+        bool coefficientsValid = false, cachedReverse = false;
+        double cachedSemitones = 0.0, cachedBars = 0.0, cachedBpm = 0.0;
+        float cachedCutoff = 0.0f, cachedResonance = 0.0f;
+        float cachedDrive = 0.0f, driveScale = 1.0f, driveInverse = 1.0f;
+        float cachedBitDepth = 0.0f, bitLevels = 1.0f;
+        float cachedPan = 0.0f, panLeft = 1.0f, panRight = 1.0f, filterA = 1.0f;
     };
     struct ScheduledEvent
     {
@@ -208,6 +217,7 @@ private:
     std::array<std::shared_ptr<const Sample>, numTracks> samples_{};
     std::array<TrackParams, numTracks> params_{};
     std::array<TrackParams, numTracks> modulated_{};
+    std::array<bool, numTracks> lfoEnabled_{}, extendedDsp_{};
     std::array<std::array<LfoState, 3>, numTracks> lfoStates_{};
     std::array<std::array<Step, maxSteps>, numTracks> steps_{};
     std::array<int, numTracks> lengths_{{16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16}};

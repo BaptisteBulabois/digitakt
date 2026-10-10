@@ -6,6 +6,8 @@
 #include "engine/PatternChain.h"
 #include <array>
 #include <atomic>
+#include <functional>
+#include <map>
 #include <mutex>
 
 class TaktAudioProcessor final : public juce::AudioProcessor,
@@ -74,6 +76,16 @@ public:
     void triggerTrack(int track, float velocity = 1.0f);
     void triggerSlice(int track, int slice, float velocity = 1.0f);
     bool loadSample(int track, const juce::File& file, juce::String& error);
+    using SampleImportCompletion = std::function<void(bool, const juce::String&)>;
+    // Decode/compress on a worker; publish and complete on the message thread.
+    // The destination pattern and track are captured when the job is requested.
+    std::uint64_t loadSampleAsync(int track, const juce::File&, SampleImportCompletion,
+                                  int destinationPattern = -1);
+    void cancelSampleImport(int track);
+    bool isSampleImportPending(int track) const;
+    std::uint64_t getDroppedUiTriggers() const { return droppedUiTriggers.load(); }
+    std::uint64_t getDroppedMidiEvents() const { return droppedMidiEvents.load(); }
+    std::uint64_t getSampleCompressionCount() const { return sampleCompressionCount.load(); }
     juce::String getSampleName(int track) const;
     std::shared_ptr<const takt::Sample> getSample(int track) const;
     int getCurrentStep(int track) const;
@@ -117,11 +129,28 @@ public:
     // Call from the editor timer (or an offline host), never the render thread.
     // Audio transitions first use immutable snapshots, then mirror APVTS here.
     void servicePendingTransitions();
+    struct UiSnapshot
+    {
+        std::array<int, takt::numTracks> currentSteps{};
+        std::array<bool, takt::numTracks> currentTrigEnabled{};
+        std::array<takt::Step, 16> visibleSteps{};
+        takt::Step selectedStepValue{};
+        int trackLength = 16, patternLength = 16;
+        std::shared_ptr<const takt::Sample> sample;
+        juce::String sampleName;
+        std::array<takt::SlicePoint, takt::maxSlices> slicePoints{};
+        int currentPattern = 0, queuedPattern = -1, currentSong = -1, currentSongRow = -1;
+        takt::PatternChain::Mode arrangementMode = takt::PatternChain::Mode::Pattern;
+        bool performKit = false, canUndo = false;
+        std::array<int, takt::songSlots> songRowCounts{};
+        takt::Song song{};
+    };
+    UiSnapshot getUiSnapshot(int selectedTrack, int selectedPage, int selectedStep, int selectedSong) const;
 
 private:
     struct ArrangementCommand
     {
-        enum class Kind { Reset, UpdatePattern, Select, Chain, UpdateSong, Song, JumpRow, PerformKit, ReloadKit };
+        enum class Kind { Reset, UpdatePattern, Restore, Select, Chain, UpdateSong, Song, JumpRow, PerformKit, ReloadKit };
         Kind kind = Kind::UpdatePattern;
         const PatternSnapshot* snapshot = nullptr;
         std::array<int, takt::patternChainCapacity> chain{};
@@ -134,7 +163,7 @@ private:
     bool enqueueArrangementLocked(ArrangementCommand);
     std::shared_ptr<const PatternSnapshot> ensurePatternLocked(int slot);
     bool saveActivePatternLocked();
-    void drainArrangementCommands();
+    bool drainArrangementCommands();
     void applyAudioTransition(const takt::PatternChain::Transition&);
     void applyAudioPattern(const PatternSnapshot&, bool applyKit);
     void publishArrangementPosition();
@@ -165,12 +194,18 @@ private:
     bool canUndoEditLocked() const;
     bool undoEditLocked();
     void retainSampleLocked(const std::shared_ptr<const takt::Sample>&);
+    std::shared_ptr<const juce::MemoryBlock> cachedSampleData(const std::shared_ptr<const takt::Sample>&);
+    void cacheSampleData(const std::shared_ptr<const takt::Sample>&, const juce::MemoryBlock&);
+    void cancelImportsForPatternLocked(int slot);
+    bool validateControlAllDestination();
+    bool publishImportedSample(int track, int slot, std::uint64_t ticket,
+                               std::uint64_t patternVersion,
+                               const std::shared_ptr<const takt::Sample>&, juce::String& error);
     std::shared_ptr<const PatternSnapshot> capturePatternLocked() const;
     void restorePattern(const PatternSnapshot&);
     void notifyPatternChanged();
     static bool validTrack(int t) { return t >= 0 && t < takt::numTracks; }
     takt::Engine engine;
-    juce::AudioFormatManager formats;
     mutable std::mutex controlMutex;
     std::array<std::array<takt::Step, takt::maxSteps>, takt::numTracks> steps{};
     std::array<int, takt::numTracks> lengths{};
@@ -180,6 +215,9 @@ private:
     Clipboard clipboard;
     UndoEdit undoEdit;
     std::shared_ptr<const PatternSnapshot> permanentPattern, temporaryPattern;
+    // Complete musical target exposed to reentrant host save callbacks while
+    // APVTS parameters are being delivered one by one. Protected by controlMutex.
+    std::shared_ptr<const PatternSnapshot> serializationTarget;
     std::array<std::shared_ptr<const PatternSnapshot>, takt::patternSlots> patternBank{};
     std::vector<RetiredPattern> retiredPatterns;
     takt::PatternChain songMetadata, audioArrangement;
@@ -196,6 +234,10 @@ private:
     std::atomic<std::uint64_t> audioKitGeneration{0}, mirroredKitGeneration{0};
     std::atomic<bool> servicingTransitions{false};
     std::array<takt::TrackParams, takt::numTracks> appliedTrackParams{};
+    std::array<std::array<float, trackParameterCount>, takt::numTracks> lastTrackValues{};
+    std::array<std::array<takt::SlicePoint, takt::maxSlices>, takt::numTracks> lastSlicePoints{};
+    std::array<bool, takt::numTracks> trackControlsValid{}, lastSongMute{};
+    bool fxControlsValid = false;
     std::array<std::array<std::atomic<std::uint64_t>, trackParameterCount>, takt::numTracks> parameterVersions{};
     std::array<std::atomic<std::uint64_t>, 17> globalParameterVersions{};
     std::array<std::array<std::atomic<std::uint64_t>, trackParameterCount>, takt::numTracks> transitionParameterVersions{};
@@ -216,6 +258,8 @@ private:
         std::array<bool, trackParameterCount> changed{};
         std::uint16_t mask = 0xffff;
         int activeTrack = 0;
+        int sourceSlot = 0;
+        std::uint64_t sourceKitGeneration = 0;
         bool active = false;
     } controlAll;
     std::atomic<std::uint64_t> editRevision{0};
@@ -228,6 +272,26 @@ private:
     std::atomic<bool> usingHostClock{false};
     juce::AbstractFifo triggerFifo{128};
     std::array<takt::TriggerEvent, 128> queuedTriggers{};
+    std::atomic<std::uint64_t> droppedUiTriggers{0}, droppedMidiEvents{0};
+    struct CachedSample
+    {
+        std::weak_ptr<const takt::Sample> sample;
+        std::shared_ptr<const juce::MemoryBlock> blob;
+    };
+    std::mutex sampleCacheMutex;
+    std::map<const takt::Sample*, CachedSample> sampleCache;
+    std::atomic<std::uint64_t> sampleCompressionCount{0};
+    struct ImportLifetime
+    {
+        std::mutex mutex;
+        TaktAudioProcessor* owner = nullptr;
+    };
+    std::shared_ptr<ImportLifetime> importLifetime = std::make_shared<ImportLifetime>();
+    juce::ThreadPool sampleImportPool{1};
+    std::array<std::atomic<std::uint64_t>, takt::numTracks> importTickets{};
+    std::array<std::atomic<int>, takt::numTracks> importDestinations{};
+    std::array<std::atomic<bool>, takt::numTracks> importPending{};
+    std::array<std::uint64_t, takt::patternSlots> importPatternVersions{}; // controlMutex
     std::array<std::array<std::atomic<float>*, trackParameterCount>, takt::numTracks> trackValues{};
     std::array<std::atomic<float>*, 17> globalValues{};
     std::array<float, 17> appliedGlobals{}; // audio-thread control snapshot

@@ -7,9 +7,12 @@ Live. The user prioritizes faithful interface behavior and musical workflow,
 not exact hardware DSP. Samples are imported by the user. Overbridge and
 hardware connection/maintenance features are out of scope.
 
-Keep the existing VST3 identity and parameter identifiers stable. Preserve
-recall of existing Live projects when extending the state format. Use the
-published commit `751ebcb` as the initial installation-tested baseline.
+Keep the existing VST3 identity and parameter identifiers stable unless a
+product change requires otherwise. On 10 October 2026 the user explicitly
+removed backward compatibility as a requirement: do not spend work preserving
+old-version state or audio parity. Verify save/reopen and rendering of the
+current version. Develop on `development/0.3-machines-modulation`; do not
+modify, merge into, or push `main` for this task.
 
 Ground interface and workflow changes in the supplied manual and firmware
 release notes. Record their versions and source sections, and distinguish

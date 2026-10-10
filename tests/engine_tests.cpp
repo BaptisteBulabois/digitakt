@@ -1029,6 +1029,69 @@ void testCompleteDspRealtimeAndInvalidControls()
     p.ampVolume = std::numeric_limits<float>::infinity();
     engine.reset(); engine.setTrackParams(0, p); bounded(triggerAudio(engine, 1024));
 }
+
+void testMasterSaturationNumerics()
+{
+    float previous = -1.0f;
+    double maxError = 0.0;
+    for (int index = -100000; index <= 100000; ++index)
+    {
+        const float input = index * 0.001f;
+        const float output = masterSoftClip(input);
+        require(std::isfinite(output) && std::abs(output) <= 1.0f, "master saturation bounds every finite input");
+        require(output >= previous - 1.0e-7f, "master saturation is monotonic");
+        require(std::abs(output + masterSoftClip(-input)) < 1.0e-7f, "master saturation is odd and introduces no DC bias");
+        maxError = std::max(maxError, static_cast<double>(std::abs(output - std::tanh(input))));
+        previous = output;
+    }
+    require(maxError < .024, "bounded rational master approximation stays within 0.024 of tanh");
+    require(masterSoftClip(0.0f) == 0.0f && masterSoftClip(std::numeric_limits<float>::max()) == 1.0f
+            && masterSoftClip(std::numeric_limits<float>::lowest()) == -1.0f,
+            "silence remains exact and huge finite bus sums cannot overflow the saturator");
+    require(masterSoftClip(std::numeric_limits<float>::quiet_NaN()) == 0.0f
+            && masterSoftClip(std::numeric_limits<float>::infinity()) == 0.0f,
+            "nonfinite bus sums are safely silenced");
+}
+
+void testOrderedAndUnorderedMidiCursor()
+{
+    auto p = dry(); p.machine = Machine::Oneshot; p.playback = PlaybackMode::ForwardLoop;
+    p.amplitudeEnvelope.mode = EnvelopeMode::Adsr;
+    p.amplitudeEnvelope.attack = .0001f; p.amplitudeEnvelope.decay = .005f;
+    p.amplitudeEnvelope.sustain = 1.0f; p.amplitudeEnvelope.release = .001f;
+    // The unsorted caller order is intentional. At sample 17 OFF then ON must
+    // leave the new note open; at sample 113 ON then OFF must release it.
+    std::vector<TriggerEvent> events{
+        {700, 0, .6f, 0, 60}, {17, 0, 0, 0, 60, 0, false, true},
+        {0, 0, .8f, 0, 60}, {17, 0, .8f, 0, 72},
+        {113, 0, .8f, 0, 60}, {2000, 0, 1, 0, 60},
+        {113, 0, 0, 0, 60, 0, false, true}, {-5, 0, 1, 0, 60},
+        {701, 0, 0, 0, 60, 0, false, true}, {9000, 0, 1, 0, 60}
+    };
+    auto sorted = events;
+    std::stable_sort(sorted.begin(), sorted.end(), [](const TriggerEvent& a, const TriggerEvent& b)
+    { return a.sampleOffset < b.sampleOffset; });
+    auto first = std::make_unique<Engine>(), second = std::make_unique<Engine>(), third = std::make_unique<Engine>();
+    for (auto* engine : {first.get(), second.get(), third.get()})
+    { initialise(*engine, sine(), engine == third.get() ? 512 : 37); engine->setTrackParams(0, p); }
+    Audio ordered(2000), unordered(2000), largerChunks(2000);
+    allocations = deallocations = 0; countAllocations = true;
+    first->process(ordered.left.data(), ordered.right.data(), 2000, {}, sorted.data(), static_cast<int>(sorted.size()));
+    second->process(unordered.left.data(), unordered.right.data(), 2000, {}, events.data(), static_cast<int>(events.size()));
+    third->process(largerChunks.left.data(), largerChunks.right.data(), 2000, {}, sorted.data(), static_cast<int>(sorted.size()));
+    countAllocations = false;
+    require(allocations == 0 && deallocations == 0, "sorted MIDI cursor and unsorted fallback allocate/free no memory");
+    require(ordered.left == unordered.left && ordered.right == unordered.right
+            && ordered.left == largerChunks.left && ordered.right == largerChunks.right,
+            "sorted and unsorted external MIDI preserve equal-offset ordering and full-block offsets across chunks");
+    require(energy(ordered.left, 40, 100) > .01 && energy(ordered.left, 200, 650) == 0.0,
+            "OFF/ON leaves the new ADSR gate open while ON/OFF at one offset releases it");
+    std::swap(sorted[4], sorted[5]); // reverse ON/OFF at offset 113
+    first->reset(); Audio reversed(2000);
+    first->process(reversed.left.data(), reversed.right.data(), 2000, {}, sorted.data(), static_cast<int>(sorted.size()));
+    require(energy(reversed.left, 200, 650) > .01,
+            "equal-offset MIDI is evaluated in caller order, rather than sorting notes by type");
+}
 }
 
 int main()
@@ -1058,7 +1121,9 @@ int main()
         {"AHD/ADSR, hold, gate releases, reset and independent AMP VOL",testNewAmplitudeGatesAndVolume},
         {"integrated filter machines, FLT.T, envelopes and BASE/WIDTH",testIntegratedFilterMachinesEnvelopeAndBaseWidth},
         {"integrated BR/SRR/OD routing, chorus and send-effect tails",testIntegratedTrackFxAndChorusRouting},
-        {"complete 16-track DSP allocation/free stress and invalid controls",testCompleteDspRealtimeAndInvalidControls}
+        {"complete 16-track DSP allocation/free stress and invalid controls",testCompleteDspRealtimeAndInvalidControls},
+        {"bounded master saturation, numerical accuracy and finite extremes",testMasterSaturationNumerics},
+        {"sorted MIDI cursor, unsorted fallback and equal-offset note ordering",testOrderedAndUnorderedMidiCursor}
     };
     int failed=0;
     for (const auto& test:tests)

@@ -100,7 +100,8 @@ identifiants, indices et plages inchangés, ainsi que :
 - Migration STATE_1 vers STATE_2 puis nouvelle ouverture, conservant le
   placement absolu aux positions PPQ 1,75 et 2 du transport host.
 
-La validation Xvfb avec `TaktTests --gui … --host … --legacy … --render …`+passe : navigation des six machines, trois LFO, AMP/EQ/FX/TRIG, Control All,
+La validation Xvfb avec `TaktTests --gui … --host … --legacy … --render …`
+passe : navigation des six machines, trois LFO, AMP/EQ/FX/TRIG, Control All,
 banques et édition/démarrage de songs ; gestes d'automation équilibrés et
 raccourcis Windows sans caractère texte. Le test Song traite réellement
 la commande audio et sa frontière de pattern avant de vérifier l'activation.
@@ -131,3 +132,58 @@ PE AMD64, manifeste 0.3.0, capture Windows et LISEZ-MOI présents.
 Ces résultats ne constituent pas un essai de 0.3 dans Ableton Live ni une
 comparaison du DSP avec le matériel. Les limites de workflow restent dans le
 [guide 0.3](WORKFLOW_0_3.md).
+
+## Corrections de développement 0.3.1
+
+Le 10 octobre 2026, la compilation Linux via `bash scripts/build.sh` réussit.
+Les six cibles CTest passent : moteur (26 groupes), pattern chain, sequencer
+rules, AmpFilter (5 groupes), processeur et contrôle temps réel du processeur.
+Le dernier contrôle est spécifique Linux/GNU : il instrumente `new/delete`
+et `malloc/free/calloc/realloc`, avec un SysEx propriétaire servant de témoin
+positif pour vérifier que l'instrumentation détecte réellement des allocations.
+
+Les callbacks testés rendent zéro allocation et zéro libération : premier
+bloc après préparation, SysEx ignoré de 1 024 octets, rafale MIDI en saturation,
+seize pistes avec 48 LFO et filtres/chorus, transition de banque et premier
+bloc après rappel du projet courant. Cela couvre ces scénarios du processeur
+entier, sans garantir le comportement d'un callback externe fourni par un host.
+
+Les nouvelles régressions du processeur couvrent :
+
+- sauvegarde réentrante au premier callback de paramètre de TEMP et du rappel
+  d'un projet, avec réouverture d'un état complet, y compris play/sync/master ;
+- cache démo/import/blobs chargés, absence de recompression aux sauvegardes
+  suivantes, partage des samples entre patterns et comparaison du rendu ;
+- conservation dès le premier bloc des paramètres, trigs/CLEAR, longueurs,
+  slices et samples modifiés après un rappel, sur instance neuve ou déjà
+  préparée, avec sauvegarde/réouverture avant et après ce bloc ;
+- rappel remplaçant un ancien Select encore en attente, et Select suivant
+  un rappel conservant le kit du pattern demandé ;
+- timing du swing en Song : automation live héritée, override explicite
+  de la ligne prioritaire ;
+- ordre note-on/off simultané, overflow observable et admission des releases
+  même après une rafale de releases redondantes ;
+- import asynchrone, erreur, annulation, remplacement d'une demande, navigation,
+  remplacement du pattern de destination et destruction du processeur ;
+- completion pouvant détruire le processeur, et notification host demandant
+  un nouvel import sans perdre son état pending ;
+- Control All annulé après une transition automatique sans écraser le kit
+  suivant, avec gestes d'automation équilibrés.
+
+Les tests numériques vérifient le saturateur master borné à ±1, valeurs
+extrêmes et erreur inférieure à 0,024 par rapport à `tanh`. Les caches de
+filtres sont vérifiés sur les 49 transitions de machines ; le moteur MIDI
+teste les événements triés/non triés et l'ordre simultané entre sous-blocs.
+Les mesures de performance et leurs limites sont dans
+[REVIEW_FIXES_0_3_1.md](REVIEW_FIXES_0_3_1.md).
+
+La vérification Linux du bundle réel passe également : scan et instanciation
+VST3, MIDI stéréo, automation, sauvegarde/rappel et rendu WAV quatre mesures.
+La suite GUI valide les imports asynchrones, CANCEL, fermeture de l'éditeur,
+navigation et prévisualisation LFO abandonnée après transition automatique,
+en plus des gestes d'édition et d'arrangement existants. La capture 0.3.1
+du README provient de ce rendu de l'éditeur.
+
+L'utilisateur a retiré la compatibilité avec les versions précédentes comme
+exigence. Le contrôle avec un ancien bundle et la parité de son rendu ne font
+plus partie de la validation de ce lot. `main` reste au commit `185ad20`.

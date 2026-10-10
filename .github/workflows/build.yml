@@ -19,20 +19,20 @@ jobs:
       - name: Verify Windows VST3 and editor
         shell: pwsh
         run: |
-          & ".\build\TaktTests_artefacts\Release\TaktTests.exe" --gui "build/editor-0.3.png" --host "build/TaktII_artefacts/Release/VST3/Takt II.vst3"
+          & ".\build\TaktTests_artefacts\Release\TaktTests.exe" --gui "build/editor-0.3.1.png" --host "build/TaktII_artefacts/Release/VST3/Takt II.vst3"
           if ($LASTEXITCODE -ne 0) { throw "Windows VST3/editor validation failed" }
       - name: Stage installable bundle
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist/windows -Force | Out-Null
           Copy-Item -LiteralPath "build/TaktII_artefacts/Release/VST3/Takt II.vst3" -Destination dist/windows -Recurse
-          Copy-Item -LiteralPath "build/editor-0.3.png" -Destination dist/windows/PREVIEW.png
+          Copy-Item -LiteralPath "build/editor-0.3.1.png" -Destination dist/windows/PREVIEW.png
           @'
-          Takt II 0.3.0 - version de developpement - Windows x64 / Ableton Live
+          Takt II 0.3.1 - version de developpement - Windows x64 / Ableton Live
 
-          La version stable 0.2.0 reste sur main. Conservez son bundle pour y revenir.
-          Conservez aussi une copie du projet Live avant ouverture avec 0.3.0 :
-          le nouvel etat STATE_2 ne peut pas etre relu par le binaire 0.2.0.
+          La version stable 0.2.0 reste sur main.
+          La compatibilite avec les anciennes versions n'est plus une exigence.
+          Les sauvegardes et rappels sont verifies avec cette version.
 
           Fermez Live puis copiez le dossier entier Takt II.vst3 dans :
           C:\Program Files\Common Files\VST3\
@@ -44,6 +44,6 @@ jobs:
       - name: Upload VST3 bundle
         uses: actions/upload-artifact@v4
         with:
-          name: Takt-II-Windows-VST3-0.3-development
+          name: Takt-II-Windows-VST3-0.3.1-development
           path: dist/windows/
           if-no-files-found: error

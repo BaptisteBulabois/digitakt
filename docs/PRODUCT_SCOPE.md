@@ -45,9 +45,12 @@ Le commit publié `751ebcb` représente la première version. L'utilisateur a
 validé son installation comme VST3 dans Ableton Live, sans encore confirmer
 tous les comportements musicaux.
 
-Les améliorations doivent préserver l'identité du plugin, les identifiants
-des paramètres existants et le rappel des états sauvegardés. Toute extension
-de l'état doit prévoir la lecture des projets de cette première version.
+Le 10 octobre 2026, l'utilisateur a retiré l'exigence de compatibilité avec
+les versions précédentes. Le développement vérifie la sauvegarde, la
+réouverture et le rendu de la version actuelle, sans imposer le rappel ni
+la parité audio des anciennes versions. L'identité du plugin reste inchangée
+dans ce lot. Les corrections sont réalisées sur la branche de développement
+0.3 ; `main` reste intact.
 
 ## Références reçues et cible
 

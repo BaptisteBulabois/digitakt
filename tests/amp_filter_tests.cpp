@@ -14,12 +14,17 @@ namespace
 {
 thread_local bool trackAllocations = false;
 thread_local std::size_t allocationCount = 0;
+thread_local std::size_t deallocationCount = 0;
 #if defined(_MSC_VER)
 __declspec(noinline)
 #elif defined(__GNUC__) || defined(__clang__)
 __attribute__((noinline))
 #endif
-void releaseAllocation(void* pointer) noexcept { std::free(pointer); }
+void releaseAllocation(void* pointer) noexcept
+{
+    if (trackAllocations && pointer) ++deallocationCount;
+    std::free(pointer);
+}
 }
 void* operator new(std::size_t size)
 {
@@ -173,7 +178,7 @@ void testChorusAndRealtime()
     FilterParams filterParams; filterParams.machine = FilterMachine::CombPlus;
     ChorusParams p; p.depth = 1; p.speed = 2; p.width = 1;
     std::vector<float> left(24000), right(24000);
-    allocationCount = 0; trackAllocations = true;
+    allocationCount = deallocationCount = 0; trackAllocations = true;
     for (std::size_t i = 0; i < left.size(); ++i)
     {
         float sampleL = static_cast<float>(.05 * std::sin(2 * pi * 440 * i / rate)), sampleR = sampleL;
@@ -181,7 +186,7 @@ void testChorusAndRealtime()
         filter.process(sampleL, sampleR, filterParams, 500, .9f);
     }
     trackAllocations = false;
-    require(allocationCount == 0, "comb filtering and stereo chorus allocate no memory during processing");
+    require(allocationCount == 0 && deallocationCount == 0, "comb filtering and stereo chorus allocate/free no memory during processing");
     require(power(left) > 1 && power(right) > 1 && left != right, "chorus creates audible stereo movement with independent delays");
     require(std::all_of(left.begin(), left.begin() + 200, [](float value) { return value == 0; }), "chorus wet signal obeys its delay latency");
     chorus.reset(); float wetL, wetR;
@@ -199,6 +204,50 @@ void testChorusAndRealtime()
                 "invalid helper parameters and samples never produce nonfinite audio");
     }
 }
+
+void testCoefficientCacheAutomation()
+{
+    const FilterMachine machines[] = {FilterMachine::Prototype, FilterMachine::Multimode, FilterMachine::Lowpass4,
+        FilterMachine::Eq, FilterMachine::CombMinus, FilterMachine::CombPlus, FilterMachine::Legacy};
+    for (const auto oldMachine : machines)
+        for (const auto newMachine : machines)
+        {
+            StereoFilter automated, reference; automated.prepare(rate); reference.prepare(rate);
+            FilterParams old; old.machine = oldMachine; old.type = .9f; old.eqGain = -12; old.eqQ = 7;
+            old.combFeedback = .2f; old.combLowpassHz = 300; old.base = 80; old.width = 30;
+            old.keytrack = .5f; old.envDepth = 64;
+            FilterParams next = old; next.machine = newMachine; next.type = .3f; next.eqGain = 9; next.eqQ = 2;
+            next.combFeedback = .7f; next.combLowpassHz = 7000; next.base = 30; next.width = 90;
+            next.keytrack = 1; next.envDepth = -16; next.bwPre = false;
+            for (int i = 0; i < 32; ++i)
+            {
+                float a = 0, b = 0; automated.process(a, b, old, 1300, .7f, .1f, 48);
+                a = b = 0; reference.process(a, b, next, 2200, .2f, .5f, 72);
+            }
+            for (int i = 0; i < 2048; ++i)
+            {
+                const float input = static_cast<float>(.08 * std::sin(2 * pi * 700 * i / rate));
+                float left = input, right = -input, expectedLeft = left, expectedRight = right;
+                automated.process(left, right, next, 2200, .2f, .5f, 72);
+                reference.process(expectedLeft, expectedRight, next, 2200, .2f, .5f, 72);
+                require(left == expectedLeft && right == expectedRight,
+                        "cached coefficients follow machine, cutoff, resonance, EQ, comb, BASE/WIDTH and envelope automation");
+            }
+        }
+    Chorus automated, reference; automated.prepare(rate); reference.prepare(rate);
+    ChorusParams old, next; old.highpassHz = 200; next.highpassHz = 6000;
+    for (int i = 0; i < 64; ++i)
+    {
+        float a, b; automated.process(0, 0, old, a, b); reference.process(0, 0, next, a, b);
+    }
+    for (int i = 0; i < 2048; ++i)
+    {
+        const float input = static_cast<float>(.08 * std::sin(2 * pi * 440 * i / rate));
+        float a, b, expectedA, expectedB;
+        automated.process(input, input, next, a, b); reference.process(input, input, next, expectedA, expectedB);
+        require(a == expectedA && b == expectedB, "chorus highpass cache follows automation without resetting its phase");
+    }
+}
 }
 
 int main()
@@ -208,7 +257,8 @@ int main()
         {"AHD, ADSR, HOLD NOTE, release and envelope reset", testEnvelopes},
         {"multimode, LP4, EQ, base-width, keytrack and filter envelope", testFilterModesAndRouting},
         {"comb polarity and feedback, sample rate reduction and overdrive", testCombAndRateReduction},
-        {"stereo chorus, realtime allocation and finite inputs", testChorusAndRealtime}
+        {"stereo chorus, realtime allocation and finite inputs", testChorusAndRealtime},
+        {"cached filter/EQ/comb/base-width/chorus coefficient automation", testCoefficientCacheAutomation}
     };
     int failed = 0;
     for (const auto& test : tests)

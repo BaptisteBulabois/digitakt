@@ -1,6 +1,7 @@
 #include "PluginEditor.h"
 #include "engine/SequencerRules.h"
 #include <cmath>
+#include <tuple>
 
 namespace
 {
@@ -299,13 +300,16 @@ public:
     }
     void setMarkers(const std::vector<float>& points, float loopPoint, bool editable)
     {
+        if (markers == points && loop == loopPoint && editing == editable) return;
         markers = points; loop = loopPoint; editing = editable; repaint();
     }
     void setViewport(double zoom, double position, double vertical)
     {
-        visibleWidth = static_cast<float>(1.0 / juce::jmax(1.0, zoom));
-        visibleStart = static_cast<float>(position) * (1.0f - visibleWidth);
-        verticalScale = static_cast<float>(vertical); repaint();
+        const auto width = static_cast<float>(1.0 / juce::jmax(1.0, zoom));
+        const auto startPosition = static_cast<float>(position) * (1.0f - width);
+        const auto scale = static_cast<float>(vertical);
+        if (visibleWidth == width && visibleStart == startPosition && verticalScale == scale) return;
+        visibleWidth = width; visibleStart = startPosition; verticalScale = scale; repaint();
     }
     void mouseDown(const juce::MouseEvent& e) override
     {
@@ -370,6 +374,7 @@ TaktAudioProcessorEditor::TaktAudioProcessorEditor(TaktAudioProcessor& p)
       trackLevel(std::make_unique<Dial>("LEVEL"))
 {
     setLookAndFeel(skin.get());
+    waveformMarkers.reserve(takt::maxSlices);
     setWantsKeyboardFocus(true);
     addKeyListener(this);
     addAndMakeVisible(*panel);
@@ -416,7 +421,7 @@ TaktAudioProcessorEditor::TaktAudioProcessorEditor(TaktAudioProcessor& p)
     addButton(yesButton, false, "navigation-yes", "Confirm a destination, or open the Slice/Grid menu on SRC. FUNC+YES saves a temporary checkpoint.");
     addButton(trkButton, true, "track-select-modifier", "Latch TRK then a pad to select silently. Turn an encoder while TRK is latched to apply its relative change to all audio tracks. NO cancels; release TRK commits.");
     addButton(sourceImportButton, false, "source-sample-import", "Import a sample into the selected track. This VST uses imported files rather than the hardware's +Drive/project pool.");
-    sourceImportButton.onClick = [this] { chooseSample(); };
+    sourceImportButton.onClick = [this] { if (processor.isSampleImportPending(selectedTrack)) cancelSelectedImport(); else chooseSample(); };
     addButton(fillButton, true, "sequencer-fill", "Latch FILL mode. Trigs set to FILL ON/OFF follow this musical condition; independent of the host transport.");
     fillButton.onClick = [this] { processor.setParameter("fill", fillButton.getToggleState() ? 1.0f : 0.0f); };
     addButton(pageButton, false, "sequencer-page-next", "Cycle the eight sequencer pages. LEDs below are clickable for direct page selection.");
@@ -649,7 +654,7 @@ TaktAudioProcessorEditor::TaktAudioProcessorEditor(TaktAudioProcessor& p)
     noButton.onClick = [this]
     {
         if (processor.isControlAllActive()) { finishControlAll(true); trkButton.setToggleState(false, juce::dontSendNotification); }
-        else if (!pendingDestination.isEmpty()) { processor.setParameter(pendingDestination, previousDestination); pendingDestination.clear(); refreshControls(); showStatus("LFO destination selection cancelled."); }
+        else if (!pendingDestination.isEmpty()) { cancelDestinationPreview(); refreshControls(); showStatus("LFO destination selection cancelled."); }
         else if (funcButton.getToggleState()) { temporaryReloadButton.onClick(); funcButton.setToggleState(false, juce::dontSendNotification); }
         else goBack();
     };
@@ -665,7 +670,7 @@ TaktAudioProcessorEditor::TaktAudioProcessorEditor(TaktAudioProcessor& p)
     temporarySaveButton.onClick = [this] { processor.temporarySavePattern(); showStatus("Temporary checkpoint saved for this session."); };
     temporaryReloadButton.onClick = [this] { processor.temporaryReloadPattern(); refreshControls(); timerCallback(); showStatus("Pattern restored. Transport and master remain unchanged."); };
     demoButton.onClick = [this] { processor.loadDemoPattern(); timerCallback(); showStatus("Demo loaded. Use PLAY with the internal clock to listen."); };
-    importButton.onClick = [this] { chooseSample(); }; triggerButton.onClick = [this] { processor.triggerTrack(selectedTrack); };
+    importButton.onClick = [this] { if (processor.isSampleImportPending(selectedTrack)) cancelSelectedImport(); else chooseSample(); }; triggerButton.onClick = [this] { processor.triggerTrack(selectedTrack); };
     layoutPanel(); selectTrack(0);
     setResizable(true, true); setResizeLimits(720, 624, 1350, 1170);
     getConstrainer()->setFixedAspectRatio(static_cast<double>(designWidth) / designHeight);
@@ -778,8 +783,8 @@ void TaktAudioProcessorEditor::paintPanel(juce::Graphics& g)
     }
     drawCaption(g, "TAKT II", {88, 25, 285, 24}, 16, ink, true);
     drawCaption(g, "SAMPLE / SEQUENCE", {497, 28, 318, 20}, 10, mutedInk, false, juce::Justification::centredRight);
-    const auto host = processor.isUsingHostClock();
-    const auto playing = host ? processor.isHostPlaying() : processor.parameterValue("play") >= 0.5f;
+    const auto host = displayedHostClock;
+    const auto playing = displayedPlaying;
     const std::array<const char*, 6> familyNames{{"TRIG", "SRC", "FLTR", "AMP", "FX", "MOD"}};
     const auto context = view == View::Patterns ? juce::String("PATTERNS")
                        : view == View::Song ? juce::String("SONG ") + number(selectedSong + 1) + " ROW " + number(selectedSongRow + 1)
@@ -790,14 +795,14 @@ void TaktAudioProcessorEditor::paintPanel(juce::Graphics& g)
     const auto sourceWave = view == View::SliceEditor || (view == View::Parameters && family == Family::Source && parameterPages[1] == 1);
     g.setColour(juce::Colour(0xff090b0e)); g.fillRoundedRectangle(166, 76, 271, 220, 5);
     g.setColour(juce::Colours::black); g.fillRect(174, 84, 255, 162);
-    drawCaption(g, patternName(processor.getCurrentPattern()) + (processor.getPerformKit() ? " P" : "") + "  T" + number(selectedTrack + 1), {181, 89, 147, 15}, 10, ink, true);
-    drawCaption(g, host ? juce::String("DAW") : juce::String(processor.parameterValue("tempo"), 1), {340, 89, 81, 15}, 10, ink, true, juce::Justification::centredRight);
+    drawCaption(g, patternName(uiSnapshot.currentPattern) + (uiSnapshot.performKit ? " P" : "") + "  T" + number(selectedTrack + 1), {181, 89, 147, 15}, 10, ink, true);
+    drawCaption(g, host ? juce::String("DAW") : juce::String(displayedTempo, 1), {340, 89, 81, 15}, 10, ink, true, juce::Justification::centredRight);
     g.setColour(ink.withAlpha(0.4f)); g.drawHorizontalLine(107, 180, 422);
     const auto pageCaption = view == View::Parameters
         ? "  " + juce::String(parameterPages[static_cast<std::size_t>(family)] + 1) + "/" + juce::String(parameterPageCount()) : juce::String{};
     const std::array<const char*, 7> machineNames{{"LEGACY", "ONESHOT", "WERP", "STRETCH", "REPITCH", "SLICE", "GRID"}};
     const std::array<const char*, 7> filterNames{{"PROTOTYPE", "MULTI", "LP4", "EQ", "COMB-", "COMB+", "LEGACY"}};
-    const auto machineCaption = view == View::Parameters && family == Family::Source ? juce::String(" ") + machineNames[static_cast<std::size_t>(currentMachine())]
+    const auto machineCaption = view == View::Parameters && family == Family::Source ? juce::String(" ") + machineNames[static_cast<std::size_t>(juce::jlimit(0, 6, displayedMachine))]
         : view == View::Parameters && family == Family::Filter ? juce::String(" ") + filterNames[static_cast<std::size_t>(juce::jlimit(0, 6, displayedFilterMachine))]
         : view == View::Parameters && family == Family::Amp ? juce::String(" ") + juce::StringArray{"LEGACY", "AHD", "ADSR"}[juce::jlimit(0, 2, displayedAmpMode)] : juce::String{};
     drawCaption(g, context + machineCaption + pageCaption,
@@ -817,7 +822,7 @@ void TaktAudioProcessorEditor::paintPanel(juce::Graphics& g)
     drawCaption(g, view == View::SliceEditor ? juce::String(linkedSlicePoints ? "LINKED" : "UNLINKED") + "  < / > SLICE   YES EXIT"
         : view == View::Patterns ? "BANK " + juce::String::charToString(static_cast<juce::juce_wchar>('A' + selectedBank)) + "  PADS SELECT PATTERN"
         : view == View::Song ? "PADS SELECT SONG  /  ENCODERS EDIT ROW"
-        : "STEP " + number(selectedStep + 1) + "  LEN " + juce::String(processor.getTrackLength(selectedTrack)),
+        : "STEP " + number(selectedStep + 1) + "  LEN " + juce::String(displayedTrackLength),
                 {181, 226, 240, 15}, 9, ink);
     for (int i = 0; i < 8; ++i)
         drawCaption(g, juce::String::charToString(static_cast<juce::juce_wchar>('A' + i)),
@@ -834,7 +839,7 @@ void TaktAudioProcessorEditor::paintPanel(juce::Graphics& g)
     drawCaption(g, "EDIT", {78, 641, 70, 15}, 8, accent, false, juce::Justification::centred);
     drawCaption(g, "SEND FX", {710, 347, 69, 14}, 8, accent, false, juce::Justification::centred);
     drawCaption(g, view == View::Patterns ? "SELECT PATTERN 1-16" : view == View::Song ? "SELECT SONG 1-16" : gridRecording ? "GRID RECORDING" : "TRIG TRACKS", {180, 482, 249, 16}, 9, gridRecording ? trigRed : ink, true);
-    const auto current = processor.getCurrentStep(selectedTrack);
+    const auto current = displayedCurrentStep;
     const auto playedPage = playing && current >= 0 ? current / 16 : -1;
     drawCaption(g, "EDIT " + juce::String(selectedPage + 1) + " / PLAY " + (playedPage >= 0 ? juce::String(playedPage + 1) : "--"),
                 {660, 461, 170, 17}, 8, mutedInk, false, juce::Justification::centredRight);
@@ -932,6 +937,7 @@ void TaktAudioProcessorEditor::bindParameter(int slot, const juce::String& name,
     dial.slider.onValueChange = [this, index, id, name, global]
     {
         if (refreshing) return;
+        discardStaleDestinationPreview();
         const auto value = static_cast<float>(encoders[index]->slider.getValue());
         if (!global && (heldStep >= 0 || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown()))
         {
@@ -941,7 +947,8 @@ void TaktAudioProcessorEditor::bindParameter(int slot, const juce::String& name,
             return;
         }
         if (name.endsWith("_destination") && pendingDestination.isEmpty())
-        { pendingDestination = id; previousDestination = processor.parameterValue(id); showStatus("Previewing LFO destination. YES confirms; NO restores the previous destination."); }
+        { pendingDestination = id; pendingDestinationPattern = processor.getCurrentPattern(); pendingDestinationTrack = selectedTrack;
+          previousDestination = processor.parameterValue(id); showStatus("Previewing LFO destination. YES confirms; NO restores the previous destination."); }
         if (!global && processor.isControlAllActive()) processor.updateControlAll(name, value);
         else processor.setParameter(id, value);
     };
@@ -1032,6 +1039,7 @@ void TaktAudioProcessorEditor::bindPlayback(int slot)
 
 void TaktAudioProcessorEditor::rebuildControls()
 {
+    refreshUiSnapshot();
     refreshing = true;
     displayedMachine = currentMachine();
     displayedAmpMode = juce::roundToInt(processor.parameterValue(TaktAudioProcessor::trackParameterID(selectedTrack, "ampMode")));
@@ -1049,18 +1057,18 @@ void TaktAudioProcessorEditor::rebuildControls()
     if (view == View::Patterns)
     {
         bindCustom(0, "PTN LEN", 1, 128, 1, ValueFormat::Integer, "Master pattern length used for pattern changes and arrangement boundaries; individual track lengths remain independent.",
-            [this] { return static_cast<double>(processor.getPatternLength()); }, [this](double value) { processor.setPatternLength(juce::roundToInt(value)); });
+            [this] { return static_cast<double>(uiSnapshot.patternLength); }, [this](double value) { processor.setPatternLength(juce::roundToInt(value)); });
         bindCustom(1, "PERFORM KIT", 0, 1, 1, ValueFormat::Integer, "Preserve the current kit across pattern changes without autosaving performance tweaks.",
             [this] { return processor.getPerformKit() ? 1.0 : 0.0; }, [this](double value) { processor.setPerformKit(value >= 0.5); });
         encoders[1]->slider.textFromValueFunction = [](double value) { return value >= 0.5 ? juce::String("ON") : juce::String("OFF"); }; encoders[1]->slider.updateText();
     }
     else if (view == View::Song)
     {
-        const auto song = processor.getSong(selectedSong);
+        const auto& song = uiSnapshot.song;
         if (song.rowCount > 0)
         {
             bindCustom(0, "PATTERN", 0, 127, 1, ValueFormat::Integer, "Pattern address for this song row.",
-                [this] { return static_cast<double>(processor.getSong(selectedSong).rows[static_cast<std::size_t>(selectedSongRow)].pattern.index); },
+                [this] { return static_cast<double>(uiSnapshot.song.rows[static_cast<std::size_t>(selectedSongRow)].pattern.index); },
                 [this](double value) { editSongRow([value](takt::SongRow& row) { row.pattern.index = juce::roundToInt(value); }); });
             encoders[0]->slider.textFromValueFunction = [](double value) { return patternName(juce::roundToInt(value)); }; encoders[0]->slider.updateText();
             encoders[0]->slider.valueFromTextFunction = [this](const juce::String& value)
@@ -1068,27 +1076,27 @@ void TaktAudioProcessorEditor::rebuildControls()
               if (address.length() >= 2 && address.length() <= 3 && address[0] >= 'A' && address[0] <= 'H' && address.substring(1).containsOnly("0123456789") && slot >= 1 && slot <= 16) return static_cast<double>((address[0] - 'A') * 16 + slot - 1);
               return encoders[0]->slider.getValue(); };
             bindCustom(1, "REPS", 1, 64, 1, ValueFormat::Integer, "Repeat count for this row. This implementation allows 1-64 repeats.",
-                [this] { return static_cast<double>(processor.getSong(selectedSong).rows[static_cast<std::size_t>(selectedSongRow)].repeats); },
+                [this] { return static_cast<double>(uiSnapshot.song.rows[static_cast<std::size_t>(selectedSongRow)].repeats); },
                 [this](double value) { editSongRow([value](takt::SongRow& row) { row.repeats = juce::roundToInt(value); }); });
             bindCustom(2, "ROW LEN", 0, 1024, 1, ValueFormat::Integer, "Zero follows the pattern length; a custom length is 2-1024 sequencer steps.",
-                [this] { return static_cast<double>(processor.getSong(selectedSong).rows[static_cast<std::size_t>(selectedSongRow)].length); },
+                [this] { return static_cast<double>(uiSnapshot.song.rows[static_cast<std::size_t>(selectedSongRow)].length); },
                 [this](double value) { editSongRow([value](takt::SongRow& row) { row.length = value < 0.5 ? 0 : juce::jmax(2, juce::roundToInt(value)); }); });
             encoders[2]->slider.textFromValueFunction = [](double value) { return value < 0.5 ? juce::String("PATTERN") : juce::String(juce::roundToInt(value)); }; encoders[2]->slider.updateText();
             bindCustom(3, "ROW BPM", 0, 300, 1, ValueFormat::Integer, "Zero follows pattern BPM; otherwise 30-300. Live's tempo has priority when HOST SYNC is active.",
-                [this] { return processor.getSong(selectedSong).rows[static_cast<std::size_t>(selectedSongRow)].tempo; },
+                [this] { return uiSnapshot.song.rows[static_cast<std::size_t>(selectedSongRow)].tempo; },
                 [this](double value) { editSongRow([value](takt::SongRow& row) { row.tempo = value < 0.5 ? 0 : juce::jmax(30.0, value); }); });
             encoders[3]->slider.textFromValueFunction = [](double value) { return value < 0.5 ? juce::String("PATTERN") : juce::String(juce::roundToInt(value)); }; encoders[3]->slider.updateText();
             bindCustom(4, "SWING*", 0, 76, 1, ValueFormat::Integer, "PATTERN follows the pattern swing; otherwise the legacy software swing amount, 0-75%.",
-                [this] { const auto swing = processor.getSong(selectedSong).rows[static_cast<std::size_t>(selectedSongRow)].swing; return swing < 0 ? 0.0 : static_cast<double>(swing) * 100 + 1; },
+                [this] { const auto swing = uiSnapshot.song.rows[static_cast<std::size_t>(selectedSongRow)].swing; return swing < 0 ? 0.0 : static_cast<double>(swing) * 100 + 1; },
                 [this](double value) { editSongRow([value](takt::SongRow& row) { row.swing = value < .5 ? -1.0f : static_cast<float>((value - 1) / 100); }); });
             encoders[4]->slider.textFromValueFunction = [](double value) { return value < .5 ? juce::String("PATTERN") : juce::String(juce::roundToInt(value) - 1) + "%"; }; encoders[4]->slider.updateText();
             encoders[4]->slider.valueFromTextFunction = [](const juce::String& value) { return value.containsIgnoreCase("PATTERN") ? 0.0 : value.getDoubleValue() + 1; };
         }
         bindCustom(5, "SONG BPM", 0, 300, 1, ValueFormat::Integer, "Zero uses row/pattern BPM; otherwise this song-wide 30-300 BPM overrides individual rows. Host tempo has priority.",
-            [this] { return processor.getSong(selectedSong).tempo; }, [this](double value) { auto changed = processor.getSong(selectedSong); changed.tempo = value < 0.5 ? 0 : juce::jmax(30.0, value); processor.setSong(selectedSong, changed); });
+            [this] { return uiSnapshot.song.tempo; }, [this](double value) { auto changed = processor.getSong(selectedSong); changed.tempo = value < 0.5 ? 0 : juce::jmax(30.0, value); processor.setSong(selectedSong, changed); });
         encoders[5]->slider.textFromValueFunction = [](double value) { return value < 0.5 ? juce::String("ROWS") : juce::String(juce::roundToInt(value)); }; encoders[5]->slider.updateText();
         bindCustom(6, "END", 0, 1, 1, ValueFormat::Integer, "LOOP repeats from the first row; STOP ends the internal arrangement and does not stop Live.",
-            [this] { return processor.getSong(selectedSong).endLoop ? 1.0 : 0.0; }, [this](double value) { auto changed = processor.getSong(selectedSong); changed.endLoop = value >= 0.5; processor.setSong(selectedSong, changed); });
+            [this] { return uiSnapshot.song.endLoop ? 1.0 : 0.0; }, [this](double value) { auto changed = processor.getSong(selectedSong); changed.endLoop = value >= 0.5; processor.setSong(selectedSong, changed); });
         encoders[6]->slider.textFromValueFunction = [](double value) { return value >= 0.5 ? juce::String("LOOP") : juce::String("STOP"); }; encoders[6]->slider.updateText();
     }
     else if (view == View::SliceEditor)
@@ -1163,12 +1171,12 @@ void TaktAudioProcessorEditor::rebuildControls()
                 bindStep(4, "lfoTrig", "LFO.T", 0, 1, 1, ValueFormat::Integer, "Retrigger this track's three LFOs when this note trig plays.");
                 bindStep(5, "filterTrig", "FLT.T", 0, 1, 1, ValueFormat::Integer, "Trigger this track's filter envelope when this note trig plays.");
                 bindCustom(6, "FILL", 0, 2, 1, ValueFormat::Integer, "ANY plays independently of FILL; ON requires FILL, OFF requires it to be inactive. Editing enables advanced rules.",
-                    [this] { return static_cast<double>(processor.getStep(selectedTrack, selectedStep).rule.fill); },
+                    [this] { return static_cast<double>(uiSnapshot.selectedStepValue.rule.fill); },
                     [this](double value) { changeStep([value](takt::Step& step) { step.advanced = true; step.rule.fill = static_cast<takt::sequencer::Fill>(juce::roundToInt(value)); }); });
                 encoders[6]->slider.textFromValueFunction = [](double value) { return juce::StringArray{"ANY", "ON", "OFF"}[juce::jlimit(0, 2, juce::roundToInt(value))]; }; encoders[6]->slider.updateText();
                 const auto names = trigConditionNames();
                 bindCustom(7, "COND", 0, names.size() - 1, 1, ValueFormat::Integer, "Documented PRE, NEI, 1ST, LST, A:B and inverses. Editing enables advanced rules; old EVERY/OFFSET remains under STEP TOOLS.",
-                    [this] { return static_cast<double>(trigConditionIndex(processor.getStep(selectedTrack, selectedStep).rule)); },
+                    [this] { return static_cast<double>(trigConditionIndex(uiSnapshot.selectedStepValue.rule)); },
                     [this](double value) { changeStep([value](takt::Step& step) { const auto fill = step.rule.fill; step.rule = trigConditionAt(juce::roundToInt(value)); step.rule.fill = fill; step.rule.probability = step.probability; step.advanced = true; }); });
                 encoders[7]->slider.textFromValueFunction = [names](double value) { return names[juce::jlimit(0, names.size() - 1, juce::roundToInt(value))]; }; encoders[7]->slider.updateText();
             }
@@ -1386,7 +1394,7 @@ void TaktAudioProcessorEditor::showView(View v)
 void TaktAudioProcessorEditor::goBack()
 {
     if (processor.isControlAllActive()) { finishControlAll(true); trkButton.setToggleState(false, juce::dontSendNotification); return; }
-    if (!pendingDestination.isEmpty()) { processor.setParameter(pendingDestination, previousDestination); pendingDestination.clear(); refreshControls(); return; }
+    if (!pendingDestination.isEmpty()) { cancelDestinationPreview(); refreshControls(); return; }
     if (helpVisible)
     { helpVisible = false; helpButton.setToggleState(false, juce::dontSendNotification); }
     else if (toolsVisible) { toolsVisible = false; toolsButton.setToggleState(false, juce::dontSendNotification); }
@@ -1409,30 +1417,42 @@ void TaktAudioProcessorEditor::selectStep(int step, bool toggle)
     refreshSteps(); refreshControls(); panel->repaint();
 }
 
+void TaktAudioProcessorEditor::refreshUiSnapshot()
+{
+    if (!updatingTimer) uiSnapshot = processor.getUiSnapshot(selectedTrack, selectedPage, selectedStep, selectedSong);
+    if (view == View::Song) selectedSongRow = juce::jlimit(0, juce::jmax(0, uiSnapshot.song.rowCount - 1), selectedSongRow);
+}
+
 void TaktAudioProcessorEditor::refreshSteps()
 {
-    const auto current = processor.getCurrentStep(selectedTrack), length = processor.getTrackLength(selectedTrack);
+    refreshUiSnapshot();
+    const auto current = uiSnapshot.currentSteps[static_cast<std::size_t>(selectedTrack)], length = uiSnapshot.trackLength;
+    displayedCurrentStep = current; displayedTrackLength = length;
     const auto playing = processor.isUsingHostClock() ? processor.isHostPlaying() : processor.parameterValue("play") >= 0.5f;
     for (int i = 0; i < 16; ++i)
     {
-        auto& pad = *stepPads[static_cast<std::size_t>(i)]; pad.grid = gridRecording;
+        auto& pad = *stepPads[static_cast<std::size_t>(i)];
+        const auto visualState = [&pad] { return std::make_tuple(pad.index, pad.enabled, pad.selected, pad.playing,
+            pad.hasLock, pad.withinLength, pad.grid, pad.lockOnly); };
+        const auto previous = visualState(); pad.grid = gridRecording;
         if (view == View::Patterns || view == View::Song)
         {
             pad.index = i; pad.grid = false; pad.lockOnly = false; pad.withinLength = true; pad.hasLock = false;
-            pad.enabled = view == View::Patterns ? processor.getCurrentPattern() == selectedBank * 16 + i : processor.getSong(i).rowCount > 0;
-            pad.selected = view == View::Patterns ? processor.getCurrentPattern() == selectedBank * 16 + i : selectedSong == i;
-            pad.playing = view == View::Patterns ? processor.getQueuedPattern() == selectedBank * 16 + i : processor.getCurrentSong() == i && playing;
+            pad.enabled = view == View::Patterns ? uiSnapshot.currentPattern == selectedBank * 16 + i : uiSnapshot.songRowCounts[static_cast<std::size_t>(i)] > 0;
+            pad.selected = view == View::Patterns ? uiSnapshot.currentPattern == selectedBank * 16 + i : selectedSong == i;
+            pad.playing = view == View::Patterns ? uiSnapshot.queuedPattern == selectedBank * 16 + i : uiSnapshot.currentSong == i && playing;
             pad.setTooltip(view == View::Patterns ? "Select " + patternName(selectedBank * 16 + i) + " silently. While playing, it is queued at the pattern boundary." : "Select SONG " + number(i + 1) + " for editing. Use PLAY SONG to activate it.");
-            pad.repaint(); continue;
+            if (previous != visualState()) pad.repaint();
+            continue;
         }
         pad.index = gridRecording ? selectedPage * 16 + i : i;
-        const auto s = processor.getStep(selectedTrack, selectedPage * 16 + i);
+        const auto& s = uiSnapshot.visibleSteps[static_cast<std::size_t>(i)];
         pad.enabled = gridRecording && (s.enabled || s.lockTrig); pad.lockOnly = s.lockTrig;
         pad.selected = gridRecording ? selectedStep == pad.index : selectedTrack == i;
         pad.playing = playing && gridRecording && current == pad.index; pad.hasLock = s.lockPitch || s.lockCutoff || s.lockSlice;
         pad.withinLength = !gridRecording || pad.index < length;
         pad.setTooltip(gridRecording ? "Click to toggle a note. Hold to edit without removing it; right-click selects. FUNC+pad toggles a yellow lock trig." : "Click to play this track. Right-click or modifier-click selects it silently.");
-        pad.repaint();
+        if (previous != visualState()) pad.repaint();
     }
     for (int i = 0; i < 8; ++i) pageButtons[static_cast<std::size_t>(i)].setToggleState(i == selectedPage, juce::dontSendNotification);
     patternLength.setValue(length, juce::dontSendNotification);
@@ -1440,8 +1460,9 @@ void TaktAudioProcessorEditor::refreshSteps()
 
 void TaktAudioProcessorEditor::refreshControls()
 {
+    refreshUiSnapshot();
     const auto wasRefreshing = refreshing; refreshing = true;
-    const auto s = processor.getStep(selectedTrack, selectedStep);
+    const auto& s = uiSnapshot.selectedStepValue;
     for (std::size_t i = 0; i < bindings.size(); ++i)
     {
         auto& slider = encoders[i]->slider; if (slider.isMouseButtonDown()) continue;
@@ -1481,12 +1502,13 @@ int TaktAudioProcessorEditor::currentMachine() const
 { return juce::jlimit(0, 6, juce::roundToInt(processor.parameterValue(TaktAudioProcessor::trackParameterID(selectedTrack, "machine")))); }
 
 int TaktAudioProcessorEditor::currentSliceCount() const
-{ return juce::jlimit(1, takt::maxSlices, juce::roundToInt(processor.parameterValue(TaktAudioProcessor::trackParameterID(selectedTrack, "sliceCount")))); }
+{ return updatingTimer ? timerSliceCount : juce::jlimit(1, takt::maxSlices, juce::roundToInt(processor.parameterValue(TaktAudioProcessor::trackParameterID(selectedTrack, "sliceCount")))); }
 
 takt::SlicePoint TaktAudioProcessorEditor::effectiveSlicePoint(int index) const
 {
     const auto count = currentSliceCount(); index = juce::jlimit(0, count - 1, index);
-    auto point = processor.getSlicePoints(selectedTrack)[static_cast<std::size_t>(index)];
+    auto point = updatingTimer ? uiSnapshot.slicePoints[static_cast<std::size_t>(index)]
+                              : processor.getSlicePoints(selectedTrack)[static_cast<std::size_t>(index)];
     if (point.end <= point.start)
     { point.start = static_cast<float>(index) / static_cast<float>(count); point.end = static_cast<float>(index + 1) / static_cast<float>(count); point.loop = point.start; }
     return point;
@@ -1502,10 +1524,21 @@ void TaktAudioProcessorEditor::finishControlAll(bool cancel)
 
 void TaktAudioProcessorEditor::cancelDestinationPreview()
 {
+    discardStaleDestinationPreview();
     if (pendingDestination.isEmpty()) return;
     if (processor.isControlAllActive()) processor.updateControlAll(pendingDestination.fromFirstOccurrenceOf("_", false, false), previousDestination);
     else processor.setParameter(pendingDestination, previousDestination);
     pendingDestination.clear();
+}
+
+void TaktAudioProcessorEditor::discardStaleDestinationPreview()
+{
+    // A preview belongs to the pattern and track where its first edit happened.
+    // Once playback selects another pattern, its old value must never be
+    // restored into the newly active kit, including when this editor closes.
+    if (!pendingDestination.isEmpty()
+        && (pendingDestinationPattern != processor.getCurrentPattern() || pendingDestinationTrack != selectedTrack))
+        pendingDestination.clear();
 }
 
 void TaktAudioProcessorEditor::showMachineMenu()
@@ -1572,22 +1605,23 @@ void TaktAudioProcessorEditor::editSongRow(const std::function<void(takt::SongRo
 
 void TaktAudioProcessorEditor::refreshArrangementControls()
 {
+    refreshUiSnapshot();
     const auto wasRefreshing = refreshing; refreshing = true;
     for (int i = 0; i < 8; ++i) bankButtons[static_cast<std::size_t>(i)].setToggleState(selectedBank == i, juce::dontSendNotification);
-    performKitButton.setToggleState(processor.getPerformKit(), juce::dontSendNotification);
-    centreButtons[0].setToggleState(processor.getPerformKit(), juce::dontSendNotification);
+    performKitButton.setToggleState(uiSnapshot.performKit, juce::dontSendNotification);
+    centreButtons[0].setToggleState(uiSnapshot.performKit, juce::dontSendNotification);
     unavailableButtons[1].setToggleState(view == View::Patterns, juce::dontSendNotification);
     unavailableButtons[2].setToggleState(view == View::Song, juce::dontSendNotification);
     if (view == View::Patterns)
     {
-        const auto queued = processor.getQueuedPattern();
-        const auto mode = processor.getArrangementMode();
-        arrangementLabel.setText("CURRENT " + patternName(processor.getCurrentPattern()) + "  |  NEXT " + (queued < 0 ? juce::String("--") : patternName(queued))
+        const auto queued = uiSnapshot.queuedPattern;
+        const auto mode = uiSnapshot.arrangementMode;
+        arrangementLabel.setText("CURRENT " + patternName(uiSnapshot.currentPattern) + "  |  NEXT " + (queued < 0 ? juce::String("--") : patternName(queued))
             + "  |  " + (mode == takt::PatternChain::Mode::Song ? "SONG" : mode == takt::PatternChain::Mode::Chain ? "CHAIN" : "PATTERN") + "  |  8 banks x 16 patterns", juce::dontSendNotification);
     }
     if (view == View::Song)
     {
-        const auto song = processor.getSong(selectedSong); selectedSongRow = juce::jlimit(0, juce::jmax(0, song.rowCount - 1), selectedSongRow);
+        const auto& song = uiSnapshot.song; selectedSongRow = juce::jlimit(0, juce::jmax(0, song.rowCount - 1), selectedSongRow);
         songSelect.setSelectedId(selectedSong + 1, juce::dontSendNotification);
         if (displayedSongRows != song.rowCount)
         {
@@ -1598,9 +1632,9 @@ void TaktAudioProcessorEditor::refreshArrangementControls()
         songRowSelect.setSelectedId(song.rowCount == 0 ? 0 : selectedSongRow + 1, juce::dontSendNotification);
         songRowSelect.setTextWhenNothingSelected("EMPTY SONG");
         songDeleteButton.setEnabled(song.rowCount > 0); songPlayButton.setEnabled(song.rowCount > 0); songMutesButton.setEnabled(song.rowCount > 0);
-        songQueueButton.setEnabled(song.rowCount > 0 && processor.getCurrentSong() == selectedSong); songAddButton.setEnabled(song.rowCount < takt::songRowCapacity);
-        const auto activeRow = processor.getCurrentSongRow();
-        const auto playingCaption = processor.getCurrentSong() == selectedSong && activeRow >= 0 ? "PLAY ROW " + number(activeRow + 1) : "NOT ACTIVE";
+        songQueueButton.setEnabled(song.rowCount > 0 && uiSnapshot.currentSong == selectedSong); songAddButton.setEnabled(song.rowCount < takt::songRowCapacity);
+        const auto activeRow = uiSnapshot.currentSongRow;
+        const auto playingCaption = uiSnapshot.currentSong == selectedSong && activeRow >= 0 ? "PLAY ROW " + number(activeRow + 1) : "NOT ACTIVE";
         const auto mask = song.rowCount > 0 ? song.rows[static_cast<std::size_t>(selectedSongRow)].muteMask : 0;
         arrangementLabel.setText(juce::String(playingCaption) + "  |  " + juce::String(song.rowCount) + "/99 ROWS  |  MUTES 0x" + juce::String::toHexString(static_cast<int>(mask)).paddedLeft('0', 4)
             + "  |  END " + (song.endLoop ? "LOOP" : "STOP"), juce::dontSendNotification);
@@ -1649,6 +1683,7 @@ void TaktAudioProcessorEditor::applyChain()
 
 void TaktAudioProcessorEditor::confirmAction()
 {
+    discardStaleDestinationPreview();
     if (!pendingDestination.isEmpty()) { pendingDestination.clear(); showStatus("LFO destination confirmed."); return; }
     if (view == View::SliceEditor)
     {
@@ -1844,15 +1879,28 @@ bool TaktAudioProcessorEditor::keyPressed(const juce::KeyPress& key, juce::Compo
 
 void TaktAudioProcessorEditor::timerCallback()
 {
+    discardStaleDestinationPreview();
     processor.servicePendingTransitions();
+    uiSnapshot = processor.getUiSnapshot(selectedTrack, selectedPage, selectedStep, selectedSong);
+    if (view == View::Song) selectedSongRow = juce::jlimit(0, juce::jmax(0, uiSnapshot.song.rowCount - 1), selectedSongRow);
+    timerSliceCount = currentSliceCount();
+    const juce::ScopedValueSetter<bool> timerGuard(updatingTimer, true);
     const auto ampMode = juce::roundToInt(processor.parameterValue(TaktAudioProcessor::trackParameterID(selectedTrack, "ampMode")));
     const auto filterMachine = juce::roundToInt(processor.parameterValue(TaktAudioProcessor::trackParameterID(selectedTrack, "filterMachine")));
     const auto sourceChanged = currentMachine() != displayedMachine;
     if (sourceChanged || ampMode != displayedAmpMode || filterMachine != displayedFilterMachine
-        || (view == View::Song && processor.getSong(selectedSong).rowCount != displayedSongRows))
+        || (view == View::Song && uiSnapshot.song.rowCount != displayedSongRows))
     { if (sourceChanged && view == View::SliceEditor) view = View::Parameters; rebuildControls(); }
+    const auto oldPeak = displayedPeak;
     displayedPeak = juce::jmax(processor.getOutputPeak(), displayedPeak * 0.87f);
-    const auto playing = processor.isUsingHostClock() ? processor.isHostPlaying() : processor.parameterValue("play") >= 0.5f;
+    if (displayedPeak < 0.001f) displayedPeak = 0.0f;
+    const auto host = processor.isUsingHostClock();
+    const auto playing = host ? processor.isHostPlaying() : processor.parameterValue("play") >= 0.5f;
+    if (host != displayedHostClock || playing != displayedPlaying)
+        panel->repaint(176, 53, 249, 20);
+    displayedHostClock = host; displayedPlaying = playing; displayedTempo = processor.parameterValue("tempo");
+    if (std::abs(oldPeak - displayedPeak) >= 0.001f || (oldPeak != 0.0f && displayedPeak == 0.0f))
+        panel->repaint(757, 645, 73, 8);
     runButton.setToggleState(playing, juce::dontSendNotification);
     fillButton.setToggleState(processor.parameterValue("fill") >= 0.5f, juce::dontSendNotification);
     const auto wasRefreshing = refreshing; refreshing = true;
@@ -1860,12 +1908,14 @@ void TaktAudioProcessorEditor::timerCallback()
     refreshing = wasRefreshing;
     for (int i = 0; i < takt::numTracks; ++i)
     {
-        auto& pad = *trackPads[static_cast<std::size_t>(i)]; pad.selected = i == selectedTrack;
-        pad.muted = processor.parameterValue(TaktAudioProcessor::trackParameterID(i, "mute")) >= 0.5f;
-        pad.sampleName = processor.getSampleName(i).upToFirstOccurrenceOf(".", false, false);
-        const auto current = processor.getCurrentStep(i); pad.playing = playing && current >= 0 && processor.getStep(i, current).enabled && !pad.muted; pad.repaint();
+        auto& pad = *trackPads[static_cast<std::size_t>(i)];
+        const auto selected = i == selectedTrack;
+        const auto muted = processor.parameterValue(TaktAudioProcessor::trackParameterID(i, "mute")) >= 0.5f;
+        const auto active = playing && uiSnapshot.currentTrigEnabled[static_cast<std::size_t>(i)] && !muted;
+        if (pad.selected != selected || pad.muted != muted || pad.playing != active)
+        { pad.selected = selected; pad.muted = muted; pad.playing = active; pad.repaint(); }
     }
-    const auto sample = processor.getSample(selectedTrack); const auto name = processor.getSampleName(selectedTrack);
+    const auto& sample = uiSnapshot.sample; const auto& name = uiSnapshot.sampleName;
     if (lastSample != sample || lastSampleName != name)
     {
         lastSample = sample; lastSampleName = name; waveform->setSample(sample);
@@ -1879,10 +1929,10 @@ void TaktAudioProcessorEditor::timerCallback()
     {
         const auto count = currentSliceCount(); selectedSlice = juce::jlimit(0, count - 1, selectedSlice);
         const auto slice = view == View::SliceEditor ? selectedSlice : juce::jlimit(0, count - 1, juce::roundToInt(processor.parameterValue(TaktAudioProcessor::trackParameterID(selectedTrack, "slice"))));
-        std::vector<float> points; points.reserve(static_cast<std::size_t>(count));
-        for (int i = 0; i < count; ++i) points.push_back(machine == 6 ? static_cast<float>(i) / static_cast<float>(count) : effectiveSlicePoint(i).start);
+        waveformMarkers.clear();
+        for (int i = 0; i < count; ++i) waveformMarkers.push_back(machine == 6 ? static_cast<float>(i) / static_cast<float>(count) : effectiveSlicePoint(i).start);
         const auto point = machine == 6 ? takt::SlicePoint{static_cast<float>(slice) / static_cast<float>(count), static_cast<float>(slice + 1) / static_cast<float>(count), static_cast<float>(slice) / static_cast<float>(count)} : effectiveSlicePoint(slice);
-        waveform->setRegion(point.start, point.end); waveform->setMarkers(points, point.loop, view == View::SliceEditor);
+        waveform->setRegion(point.start, point.end); waveform->setMarkers(waveformMarkers, point.loop, view == View::SliceEditor);
         waveform->setViewport(view == View::SliceEditor ? sliceZoom : 1.0, slicePosition, view == View::SliceEditor ? sliceVerticalZoom : 1.0);
     }
     else
@@ -1898,15 +1948,39 @@ void TaktAudioProcessorEditor::timerCallback()
         const auto id = TaktAudioProcessor::trackParameterID(selectedTrack, "lfo" + juce::String(parameterPages[5] + 1) + "_wave");
         encoders[5]->present(processor.parameterValue(id) >= 5.5f ? "SLEW" : "SPH", true, "Start phase 0-127; for RND this smooths transitions instead.");
     }
-    refreshSteps(); refreshControls(); refreshArrangementControls(); undoButton.setEnabled(processor.canUndoEdit());
+    refreshSteps(); refreshControls(); refreshArrangementControls(); undoButton.setEnabled(uiSnapshot.canUndo);
+    refreshImportControls();
+    const auto droppedTriggers = processor.getDroppedUiTriggers(), droppedMidi = processor.getDroppedMidiEvents();
+    if (droppedTriggers != displayedDroppedTriggers || droppedMidi != displayedDroppedMidi)
+    {
+        displayedDroppedTriggers = droppedTriggers; displayedDroppedMidi = droppedMidi;
+        toolsButton.setTooltip("Open software utilities: tempo, swing, length, clipboard scope, demo and selected-track controls. Dropped events since opening the plugin: MIDI "
+            + juce::String(static_cast<juce::int64>(droppedMidi)) + ", audition " + juce::String(static_cast<juce::int64>(droppedTriggers)) + ".");
+    }
     if (juce::Time::getMillisecondCounterHiRes() > statusExpiry)
     {
         statusLabel.setColour(juce::Label::textColourId, mutedInk);
-        statusLabel.setText(view == View::Patterns ? "PATTERNS: choose bank A-H, then pad 1-16 | edit or play a chain | BACK returns to parameters"
+        statusLabel.setText(processor.isSampleImportPending(selectedTrack) ? "Loading sample in the background | CANCEL IMPORT cancels this track's pending import"
+            : view == View::Patterns ? "PATTERNS: choose bank A-H, then pad 1-16 | edit or play a chain | BACK returns to parameters"
             : view == View::Song ? "SONG: pads select songs | ADD ROW | encoders edit the selected row | BACK returns to parameters"
             : gridRecording ? "GRID: click a pad to toggle a step | right-click selects | STEP TOOLS edits locks | ? shows all shortcuts" : "PLAY: pads trigger tracks | right-click selects silently | REC returns to grid editing | ? shows all shortcuts", juce::dontSendNotification);
     }
-    processor.releaseUnusedSamples(); panel->repaint();
+    const auto playingPage = playing && displayedCurrentStep >= 0 ? displayedCurrentStep / 16 : -1;
+    if (displayedPlayingPage != playingPage)
+    { displayedPlayingPage = playingPage; panel->repaint(659, 423, 172, 57); }
+    auto oled = juce::String(uiSnapshot.currentPattern) + ":" + juce::String(uiSnapshot.performKit ? 1 : 0)
+        + ":" + juce::String(selectedTrack) + ":" + juce::String(selectedStep) + ":" + juce::String(displayedTrackLength)
+        + ":" + juce::String(static_cast<int>(view)) + ":" + juce::String(static_cast<int>(family))
+        + ":" + juce::String(parameterPages[static_cast<std::size_t>(family)]) + ":" + juce::String(sendFxPage)
+        + ":" + juce::String(displayedMachine) + ":" + juce::String(displayedFilterMachine) + ":" + juce::String(displayedAmpMode)
+        + ":" + juce::String(selectedBank) + ":" + juce::String(selectedSong) + ":" + juce::String(selectedSongRow)
+        + ":" + juce::String(selectedSlice) + ":" + juce::String(currentSliceCount()) + ":" + juce::String(linkedSlicePoints ? 1 : 0)
+        + ":" + juce::String(host ? 1 : 0) + ":" + juce::String(displayedTempo, 1);
+    for (const auto& encoder : encoders)
+        oled += ":" + encoder->caption() + ":" + encoder->slider.getTextFromValue(encoder->slider.getValue()) + (encoder->slider.isEnabled() ? ":1" : ":0");
+    if (lastOledContents != oled)
+    { lastOledContents = std::move(oled); panel->repaint(165, 75, 273, 222); }
+    if (++timerTicks % 6 == 0) processor.releaseUnusedSamples();
 }
 
 void TaktAudioProcessorEditor::showStatus(const juce::String& message, bool error)
@@ -1919,30 +1993,57 @@ void TaktAudioProcessorEditor::chooseSample()
 {
     if (fileChooser) return;
     const auto destinationTrack = selectedTrack;
-    fileChooser = std::make_unique<juce::FileChooser>("Load a sample for track " + number(destinationTrack + 1), juce::File{}, "*.wav;*.aif;*.aiff;*.flac", true);
+    const auto destinationPattern = processor.getCurrentPattern();
+    fileChooser = std::make_unique<juce::FileChooser>("Load a sample for " + patternName(destinationPattern) + " / track " + number(destinationTrack + 1), juce::File{}, "*.wav;*.aif;*.aiff;*.flac", true);
     const juce::Component::SafePointer<TaktAudioProcessorEditor> safe(this);
     fileChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-        [safe, destinationTrack](const juce::FileChooser& chooser)
+        [safe, destinationTrack, destinationPattern](const juce::FileChooser& chooser)
         {
             if (safe == nullptr) return;
             const auto file = chooser.getResult();
-            if (file.existsAsFile())
-            {
-                juce::String error;
-                if (safe->processor.loadSample(destinationTrack, file, error)) safe->showStatus("Loaded " + file.getFileName() + " on track " + number(destinationTrack + 1) + ".");
-                else safe->showStatus(error, true);
-                safe->timerCallback();
-            }
+            if (file.existsAsFile()) safe->importSample(file, destinationTrack, destinationPattern);
             juce::MessageManager::callAsync([safe] { if (safe != nullptr) safe->fileChooser.reset(); });
         });
 }
 
 void TaktAudioProcessorEditor::importSample(const juce::File& file)
 {
-    juce::String error;
-    if (processor.loadSample(selectedTrack, file, error)) showStatus("Loaded " + file.getFileName() + " on track " + number(selectedTrack + 1) + ".");
-    else showStatus(error, true);
-    timerCallback();
+    importSample(file, selectedTrack, processor.getCurrentPattern());
+}
+
+void TaktAudioProcessorEditor::importSample(const juce::File& file, int destinationTrack, int destinationPattern)
+{
+    const juce::Component::SafePointer<TaktAudioProcessorEditor> safe(this);
+    const auto destination = patternName(destinationPattern) + " / track " + number(destinationTrack + 1);
+    const auto ticket = processor.loadSampleAsync(destinationTrack, file,
+        [safe, destination, name = file.getFileName()](bool success, const juce::String& error)
+        {
+            if (safe == nullptr) return;
+            safe->showStatus(success ? "Loaded " + name + " on " + destination + "." : error, !success);
+            safe->timerCallback();
+        }, destinationPattern);
+    if (ticket != 0)
+    {
+        showStatus("Loading " + file.getFileName() + " into " + destination + "... IMPORT cancels this track's pending import.");
+        refreshImportControls();
+    }
+}
+
+void TaktAudioProcessorEditor::cancelSelectedImport()
+{
+    processor.cancelSampleImport(selectedTrack);
+    showStatus("Sample import cancelled on track " + number(selectedTrack + 1) + ".");
+    refreshImportControls();
+}
+
+void TaktAudioProcessorEditor::refreshImportControls()
+{
+    const auto pending = processor.isSampleImportPending(selectedTrack);
+    importButton.setButtonText(pending ? "CANCEL IMPORT" : "IMPORT SAMPLE");
+    sourceImportButton.setButtonText(pending ? "CANCEL" : "IMPORT");
+    const auto tip = pending ? "Cancel the pending sample import for this track. Other controls remain available while the file loads."
+                             : "Import WAV, AIFF or FLAC into this track. You can also drop a file on the panel.";
+    importButton.setTooltip(tip); sourceImportButton.setTooltip(tip);
 }
 
 bool TaktAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray& files)

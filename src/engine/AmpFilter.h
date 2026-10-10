@@ -61,8 +61,23 @@ private:
         float low = 0.0f, band = 0.0f;
         float z1 = 0.0f, z2 = 0.0f, bwLow = 0.0f, bwHighLow = 0.0f, combLow = 0.0f;
     };
-    float machine(float input, int channel, const FilterParams& params, double frequency, float resonance);
-    float baseWidth(float input, int channel, const FilterParams& params);
+    struct Coefficients
+    {
+        bool valid = false;
+        FilterMachine machine = FilterMachine::Prototype;
+        float cutoff = 0.0f, keytrack = 0.0f, envDepth = 0.0f, envelope = 0.0f;
+        int note = 0;
+        double frequency = 0.0;
+        float resonance = 0.0f, type = 0.0f, g = 0.0f, k = 1.0f, a = 1.0f, a4 = 1.0f;
+        float base = 0.0f, width = 127.0f, highpassAlpha = 0.0f, lowpassAlpha = 0.0f;
+        float eqGain = 0.0f, eqQ = 1.0f, b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a2 = 0.0f;
+        float combLowpassHz = 0.0f, combAlpha = 0.0f, combFeedback = 0.0f, feedback = 0.0f;
+        std::size_t combWhole = 1;
+        float combFraction = 0.0f;
+    } coefficients_;
+    void updateCoefficients(const FilterParams& params, float cutoff, float resonance, float envelope, int note);
+    float machine(float input, int channel, const FilterParams& params);
+    float baseWidth(float input, int channel);
     double sampleRate_ = 44100.0;
     std::array<std::array<State, 2>, 2> stages_{};
     std::array<std::vector<float>, 2> comb_;
@@ -81,9 +96,12 @@ public:
     void reset();
     void rateReduction(float& left, float& right, float amount);
     static void overdrive(float& left, float& right, float amount);
+    static void overdrivePrepared(float& left, float& right, float drive, float inverse);
 
 private:
     int countdown_ = 0;
+    int reductionFrames_ = 1;
+    float cachedReduction_ = -1.0f;
     float heldLeft_ = 0.0f, heldRight_ = 0.0f;
 };
 
@@ -104,6 +122,7 @@ private:
     std::array<std::vector<float>, 2> delay_;
     std::array<float, 2> low_{};
     double sampleRate_ = 44100.0, phase_ = 0.0;
+    float cachedHighpass_ = -1.0f, highpassAlpha_ = 0.0f;
     std::size_t cursor_ = 0;
 };
 }

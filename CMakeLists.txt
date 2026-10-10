@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(TaktII VERSION 0.3.0 LANGUAGES C CXX)
+project(TaktII VERSION 0.3.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -61,7 +61,7 @@ if(TAKT_BUILD_PLUGIN)
     target_compile_definitions(TaktII PUBLIC
         JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_JACK=0
         JUCE_VST3_CAN_REPLACE_VST2=0 JUCE_USE_OGGVORBIS=0
-        JUCE_USE_MP3AUDIOFORMAT=0)
+        JUCE_USE_MP3AUDIOFORMAT=0 JUCE_MODAL_LOOPS_PERMITTED=1)
     target_link_libraries(TaktII PRIVATE takt_engine juce::juce_audio_utils juce::juce_gui_extra
         PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
@@ -71,5 +71,14 @@ if(TAKT_BUILD_PLUGIN)
         target_compile_definitions(TaktTests PRIVATE JUCE_PLUGINHOST_VST3=1)
         target_link_libraries(TaktTests PRIVATE TaktII takt_engine juce::juce_audio_utils juce::juce_gui_extra)
         add_test(NAME plugin_processor COMMAND TaktTests)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            juce_add_console_app(TaktRealtimeTests PRODUCT_NAME "Takt realtime allocation tests")
+            target_sources(TaktRealtimeTests PRIVATE tests/processor_realtime_tests.cpp)
+            target_link_libraries(TaktRealtimeTests PRIVATE TaktII takt_engine juce::juce_audio_utils juce::juce_gui_extra)
+            target_link_options(TaktRealtimeTests PRIVATE
+                "-Wl,--wrap=malloc" "-Wl,--wrap=free"
+                "-Wl,--wrap=calloc" "-Wl,--wrap=realloc")
+            add_test(NAME processor_realtime COMMAND TaktRealtimeTests)
+        endif()
     endif()
 endif()

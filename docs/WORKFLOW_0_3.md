@@ -1,4 +1,4 @@
-# Takt II 0.3.0 — branche de développement
+# Takt II 0.3.1 — branche de développement
 
 Cette branche conserve `main` et la version stable 0.2.0. Elle étend le panneau
 fourni par l'utilisateur et les workflows décrits dans le manuel Digitakt II
@@ -12,17 +12,24 @@ avant d'essayer le nouveau bundle. Le nouveau plugin garde la même identité et
 les mêmes 265 premiers paramètres : il remplace l'instance existante.
 Les nouveaux paramètres sont ajoutés après ceux de la première version.
 
-Les états `TAKTII_STATE_1` restent lisibles. Leur lecture choisit les paramètres
-Legacy et désactive les extensions afin de conserver le rendu historique.
-Le nouvel état `TAKTII_STATE_2` ajoute les machines, points Slice, modulation,
-enveloppes, effets et arrangements. Revenir au binaire 0.2.0 nécessite une
-copie du projet enregistrée avant sa conversion : cette ancienne version ne lit
-pas le nouveau format.
+Le 10 octobre 2026, l'utilisateur a retiré l'exigence de compatibilité avec
+les anciennes versions. Les validations portent sur la sauvegarde et le
+rappel de la version actuelle. Les lecteurs historiques restent présents,
+mais la parité audio avec un ancien binaire n'est plus imposée. Le format
+`TAKTII_STATE_2` contient machines, points Slice, modulation, enveloppes,
+effets et arrangements.
 
 ## Machines et samples
 
 Sélectionner une piste, importer un sample, puis utiliser **FUNC → SRC** pour
 choisir la machine. SRC dispose aussi d'une vue avec la forme d'onde.
+
+Les imports WAV/AIFF/FLAC et le glisser-déposer décodent et préparent les
+samples en arrière-plan. Les commandes restent accessibles ; **CANCEL IMPORT**
+annule la publication du fichier en cours pour la piste. Le pattern et la
+piste de destination sont mémorisés à l'ouverture du sélecteur, même si l'on
+navigue ensuite. Un nouvel import sur la même piste remplace la demande
+précédente. Fermer l'éditeur laisse l'import continuer dans le processeur.
 
 | Machine | Contrôles et comportement |
 | --- | --- |
