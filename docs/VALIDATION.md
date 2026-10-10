@@ -224,3 +224,13 @@ la waveform, MOD, Patterns, Song, les outils et l'aide. La capture 0.3.2
 du README provient du rendu actuel de l'éditeur. La comparaison avec le
 dessin officiel et les adaptations sont décrites dans
 [UI_REWORK_0_3_2.md](UI_REWORK_0_3_2.md).
+
+Le [run Windows 38063640158](https://github.com/BaptisteBulabois/digitakt/actions/runs/38063640158),
+pour le commit `31df183720093757d2e758cc6ed0a0217e14e90d`, a réussi :
+compilation x64 Release, cinq cibles CTest, vérification GUI aux trois tailles
+et scan/instanciation du vrai VST3 avec MIDI, automation et sauvegarde/rappel.
+L'[archive installable 0.3.2](https://github.com/BaptisteBulabois/digitakt/actions/runs/38063640158/artifacts/11674950129)
+a été téléchargée et inspectée : bundle complet, binaire PE AMD64, manifeste
+0.3.2, identité VST3 conservée, capture Windows 900 × 780, huit captures de
+galerie et guide d'installation présents. Cette validation utilise un host
+de test JUCE ; elle ne constitue pas un essai de la 0.3.2 dans Ableton Live.
